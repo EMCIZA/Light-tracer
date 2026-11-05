@@ -84,15 +84,15 @@ label.f textarea{min-height:64px;resize:vertical}
 #viewer{position:fixed;inset:0;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;z-index:40;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
 #viewer img{max-height:100%;max-width:100%;object-fit:contain}
 .back{align-self:flex-start;padding:6px 10px;font-size:14px}
-.sheet{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
-@media (max-width:480px){.sheet{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.sheet{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+@media (max-width:480px){.sheet{grid-template-columns:repeat(4,minmax(0,1fr))}.tagl .n{font-size:14px}}
 .tagl{background:#fff;color:#111;border:1px dashed #9aa19d;border-radius:6px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:3px;break-inside:avoid}
 .tagl svg{width:100%;max-width:120px;height:auto;display:block}
 .tagl .n{font-family:var(--mono);font-weight:700;font-size:18px;letter-spacing:.08em}
 .tagl .k{background:#f1b81f;font-size:10px;font-weight:700;padding:1px 8px;letter-spacing:.06em}
 .big .sheet{grid-template-columns:repeat(2,minmax(0,1fr))}
 .big .tagl svg{max-width:200px}
-@media print{body *{visibility:hidden}#print-area,#print-area *{visibility:visible}#print-area{position:absolute;left:0;top:0;width:100%}.sheet{grid-template-columns:repeat(4,1fr)!important}@page{size:A4;margin:10mm}}
+@media print{body *{visibility:hidden}#print-area,#print-area *{visibility:visible}#print-area{position:absolute;left:0;top:0;width:100%}.sheet{grid-template-columns:repeat(5,1fr)!important}@page{size:A4;margin:10mm}}
 .choice{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .choice button{flex-direction:column;padding:20px 12px;gap:6px;min-height:150px}
 .choice svg{width:40px;height:40px}
@@ -209,7 +209,7 @@ async function save(){
   $("#count").textContent=`${DB.lights.length} lights · ${DB.boards.length} boards`;
 }
 function seed(){
-  return { v:3, example:true, lastPrinted:1056,
+  return { v:3, example:true, lastPrinted:1080,
     boards:[
       {code:"1001",name:"DB-L3-A",location:"Level 3, east riser cupboard (key 92)",fedFrom:"MSB Ground, CB 12",notes:"Lighting chassis on the left. Door sticks, lift and pull.",photos:[exRiser(),exBoard("DB-L3-A",0)]},
       {code:"1002",name:"DB-L3-B",location:"Level 3, west riser beside fire stairs",fedFrom:"MSB Ground, CB 13",notes:"",photos:[exBoard("DB-L3-B",0)]}
@@ -258,7 +258,8 @@ function scan(cb){ scanCallback=cb||null; $("#scan-input").click(); }
 let view={name:"home"}, draft=null;
 function go(name,arg){ view={name,arg}; render(); window.scrollTo(0,0); }
 const back = (to="home",arg) => `<button class="back" data-go="${to}"${arg?` data-arg="${esc(arg)}"`:""}>← Back</button>`;
-function lightItem(l){ const b=board(l.board); return `<button class="item" data-open="${l.code}"><span class="code">${l.code}</span><span class="t"><b>${esc(l.location)}</b><span>${b?`${esc(b.name)} · CB ${esc(l.cb||"?")}`:"Not linked to a board yet"}</span></span><span class="cb">${l.history.at(-1)?fmtDate(l.history.at(-1).d):""}</span></button>`; }
+const lightName = l => l.location || `Light ${l.code}`;
+function lightItem(l){ const b=board(l.board); return `<button class="item" data-open="${l.code}"><span class="code">${l.code}</span><span class="t"><b>${esc(lightName(l))}</b><span>${b?`${esc(b.name)}${l.cb?` · CB ${esc(l.cb)}`:""}`:"Not linked to a board yet"}</span></span><span class="cb">${l.history.at(-1)?fmtDate(l.history.at(-1).d):""}</span></button>`; }
 function boardItem(b){ return `<button class="item" data-open="${b.code}"><span class="code">${b.code}</span><span class="t"><b>${esc(b.name)}</b><span>${esc(b.location)}</span></span><span class="cb">${DB.lights.filter(l=>l.board===b.code).length} lights</span></button>`; }
 
 const V={
@@ -268,7 +269,7 @@ home(){
   return `
   <section class="panel">
     <h1>Scan a tag</h1>
-    <p class="muted">Scan or type any tag number. A blank tag asks if it's going on a board or a light. You can also search by place, board or breaker, like "kitchen" or "CB 14".</p>
+    <p class="muted">Scan or type any tag number. A blank tag asks if it's on a board or a light. You can also search by board or place, like "DB-L3-A" or "kitchen".</p>
     <button class="primary" id="scan">Scan QR from photo</button>
     <form class="lookup" id="lookup-form"><input id="lookup" type="search" autocomplete="off" placeholder="1001 or search" aria-label="Tag number or search"><button>Find</button></form>
     <div class="list" id="results" hidden></div>
@@ -278,8 +279,8 @@ home(){
   <section class="panel"><h3>Recently worked on</h3>
     <div class="list">${recent.map(lightItem).join("")||`<div class="empty">No lights tagged yet.</div>`}</div>
   </section>
-  <section class="panel"><h3>Boards</h3>
-    <div class="list">${DB.boards.map(boardItem).join("")||`<div class="empty">No boards yet. Stick a tag on a board and scan it.</div>`}</div>
+  <section class="panel"><div class="row" style="align-items:center"><h3 style="flex:1 1 auto">Boards</h3><button class="primary" data-go="editBoard" data-arg="" style="flex:0 0 auto">+ Create a board</button></div>
+    <div class="list">${DB.boards.map(boardItem).join("")||`<div class="empty">No boards yet. Create one, or scan a blank tag on a board.</div>`}</div>
   </section>
   <section class="panel"><div class="row"><button data-go="make">Make QR tags</button><button data-go="data">Backup &amp; restore</button></div></section>`;
 },
@@ -287,27 +288,40 @@ blank(code){
   return `${back()}
   <div class="newtag"><b>${esc(code)}</b><span>Blank tag. What's it stuck on?</span></div>
   <div class="choice">
+    <button data-go="linkLight" data-arg="${esc(code)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/></svg><b>A light</b><span>Scan the board's tag next to link it</span></button>
     <button data-go="editBoard" data-arg="${esc(code)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 8v3M11 8v3M14 8v3M8 14v3M11 14v3M14 14v3"/></svg><b>A board</b><span>Add its name, location and photos</span></button>
-    <button data-go="editLight" data-arg="${esc(code)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/></svg><b>A light</b><span>Then scan the board's tag to link them</span></button>
+
   </div>`;
+},
+linkLight(code){
+  draft={code,board:"",cb:"",phase:"",location:"",fitting:"",notes:"",cbPhotos:[],lightPhotos:[],history:[]};
+  return `${back("blank",code)}
+  <section class="panel">
+    <div class="row" style="align-items:center"><h2 style="flex:1 1 auto">Link light to its board</h2><span class="code lg" style="flex:0 0 auto">${esc(code)}</span></div>
+    <p class="muted">Go to the board this light runs from and scan the board's tag. That's all it needs.</p>
+    <button class="primary" id="link-scan">Scan the board's tag</button>
+    <div class="lookup"><input id="link-num" inputmode="numeric" placeholder="or type board tag no." aria-label="Board tag number" style="font-size:18px"><button type="button" id="link-type">Link</button></div>
+    ${DB.boards.length?`<label class="f">Or pick it<select id="link-pick"><option value="">Choose a board…</option>${DB.boards.map(b=>`<option value="${b.code}">${esc(b.name)} (${b.code}), ${esc(b.location)}</option>`).join("")}</select></label>`:""}
+  </section>
+  <section class="panel"><p class="note">Can't get to the board right now? Save the light and link it later. It goes on the "Waiting for a board" list.</p><button id="save-unlinked">Save, link later</button></section>`;
 },
 light(code){
   const l=light(code), b=board(l.board);
   return `${back()}
-  <div class="row"><button data-go="editLight" data-arg="${l.code}">Edit</button><button data-go="qr" data-arg="${l.code}">Show QR</button><button class="danger" id="del">Delete</button></div>
+  <div class="row"><button data-go="editLight" data-arg="${l.code}">${l.location||l.cb||l.lightPhotos.length?"Edit":"Add details"}</button><button data-go="qr" data-arg="${l.code}">Show QR</button><button class="danger" id="del">Delete</button></div>
   <section class="panel">
     <div class="row" style="align-items:center"><span class="code lg" style="flex:0 0 auto">${l.code}</span><span class="muted" style="flex:1 1 auto">${esc(l.fitting)}</span></div>
-    <h1>${esc(l.location)}</h1>
+    <h1>${esc(lightName(l))}</h1>
     ${b?`<div class="supply">
-      <div><div class="k">Board</div><div class="v">${esc(b.name)}</div></div>
-      <div><div class="k">Circuit breaker</div><div class="v">CB ${esc(l.cb||"?")}${l.phase?` <span class="cb">${esc(l.phase)}</span>`:""}</div></div>
+      <div${l.cb?"":` class="wide"`}><div class="k">Board</div><div class="v">${esc(b.name)}</div></div>
+      ${l.cb?`<div><div class="k">Circuit breaker</div><div class="v">CB ${esc(l.cb)}${l.phase?` <span class="cb">${esc(l.phase)}</span>`:""}</div></div>`:""}
       <div class="wide"><div class="k">Board is at</div><div class="v small">${esc(b.location)}</div></div>
       ${b.notes?`<div class="wide"><div class="k">Access notes</div><div class="v small">${esc(b.notes)}</div></div>`:""}
     </div>`:`<div class="newtag"><span>Not linked to a board yet. Go to the board and scan its tag.</span></div><button class="primary" id="link-scan">Scan the board's tag</button>`}
   </section>
-  ${b?`<section class="panel"><h3>Breaker</h3>${photos(l.cbPhotos,"",{one:true})}</section>
+  ${b?`${l.cbPhotos.length?`<section class="panel"><h3>Breaker</h3>${photos(l.cbPhotos,"",{one:true})}</section>`:""}
   <section class="panel"><h3>Board ${esc(b.name)}</h3>${photos(b.photos,"")}<button data-open="${b.code}">Open board ${esc(b.code)} →</button></section>`:""}
-  <section class="panel"><h3>The light</h3>${photos(l.lightPhotos,"",{one:true})}${l.notes?`<p>${esc(l.notes)}</p>`:""}</section>
+  ${l.lightPhotos.length||l.notes?`<section class="panel"><h3>The light</h3>${photos(l.lightPhotos,"",{one:true})}${l.notes?`<p>${esc(l.notes)}</p>`:""}</section>`:""}
   <section class="panel"><h3>Job history</h3>
     <div class="hist">${l.history.slice().reverse().map(h=>`<div><time>${fmtDate(h.d)}</time><span>${esc(h.t)}</span></div>`).join("")||`<p class="muted">Nothing logged yet.</p>`}</div>
     <form class="lookup" id="log-form"><input id="log-text" style="font:400 16px var(--body);letter-spacing:0" placeholder="e.g. Replaced lamp" aria-label="Log a job"><button>Log</button></form>
@@ -331,12 +345,15 @@ board(code){
   <section class="panel"><h3>Lights on this board, by breaker</h3><div class="list">${ls.map(lightItem).join("")||`<div class="empty">No lights linked yet. Tag a light, then scan this board's tag.</div>`}</div></section>`;
 },
 editBoard(code){
-  const ex=board(code);
-  const b=ex||{code,name:"",location:"",fedFrom:"",notes:"",photos:[]};
+  const ex=code&&board(code);
+  const b=ex||{code:code||"",name:"",location:"",fedFrom:"",notes:"",photos:[]};
   draft={...b,photos:[...b.photos]};
-  return `${back(ex?"board":"blank",code)}
+  return `${back(ex?"board":code?"blank":"home",code||undefined)}
   <form class="panel" id="board-form">
-    <div class="row" style="align-items:center"><h2 style="flex:1 1 auto">${ex?"Edit board":"New board"}</h2><span class="code lg" style="flex:0 0 auto">${esc(code)}</span></div>
+    <div class="row" style="align-items:center"><h2 style="flex:1 1 auto">${ex?"Edit board":"New board"}</h2><span class="code lg" style="flex:0 0 auto" id="b-codechip" ${b.code?"":"hidden"}>${esc(b.code)}</span></div>
+    ${code?"":`<div class="sub"><b>QR tag for this board</b><p class="note">Stick a blank tag on the board, then scan it or type its number.</p>
+      <button type="button" class="primary" id="assign-scan">Scan the board's tag</button>
+      <label class="f">Tag number<input id="b-code" inputmode="numeric" placeholder="e.g. 1012" required></label></div>`}
     <label class="f">Board name, as labelled<input id="b-name" value="${esc(b.name)}" placeholder="e.g. DB-L4-A" required></label>
     <label class="f">Where is it?<input id="b-loc" value="${esc(b.location)}" placeholder="e.g. Level 4, east riser cupboard" required></label>
     <label class="f">Fed from<input id="b-fed" value="${esc(b.fedFrom)}" placeholder="e.g. MSB Ground, CB 14"></label>
@@ -344,7 +361,7 @@ editBoard(code){
     <h3>Photos: door, cupboard, chassis, circuit schedule</h3>
     <div id="ph-photos">${photos(draft.photos,"photos",{edit:true})}</div>
     ${addPhoto("photos","+ Add photos")}
-    <button class="primary">${ex?"Save changes":"Save board "+esc(code)}</button>
+    <button class="primary">${ex?"Save changes":"Save board"}</button>
   </form>`;
 },
 editLight(code){
@@ -354,19 +371,16 @@ editLight(code){
   return `${back(ex?"light":"blank",code)}
   <form id="light-form" class="wrap" style="width:100%">
     <section class="panel">
-      <div class="row" style="align-items:center"><div class="step" style="flex:1 1 auto"><i>1</i><h2>The light</h2></div><span class="code lg" style="flex:0 0 auto">${esc(code)}</span></div>
-      <label class="f">Where is it?<input id="f-loc" value="${esc(l.location)}" placeholder="e.g. L4 toilets, 2nd downlight from door" required></label>
-      <label class="f">Fitting type<input id="f-fit" value="${esc(l.fitting)}" placeholder="e.g. 1200mm LED batten"></label>
-      <div id="ph-lightPhotos">${photos(draft.lightPhotos,"lightPhotos",{edit:true})}</div>
-      ${addPhoto("lightPhotos","+ Photo of the light")}
-    </section>
-    <section class="panel">
-      <div class="step"><i>2</i><h2>Link the board</h2></div>
+      <div class="row" style="align-items:center"><div class="step" style="flex:1 1 auto"><i>1</i><h2>The board</h2></div><span class="code lg" style="flex:0 0 auto">${esc(code)}</span></div>
       <div id="link-area">${linkArea()}</div>
     </section>
     <section class="panel">
-      <div class="step"><i>3</i><h2>The breaker</h2></div>
-      <div class="row"><label class="f">CB number<input id="f-cb" inputmode="numeric" value="${esc(l.cb)}" placeholder="14"></label>
+      <div class="step"><i>2</i><h2>Details <span class="badge">optional</span></h2></div>
+      <label class="f">Where is it?<input id="f-loc" value="${esc(l.location)}" placeholder="Optional, e.g. L4 toilets, 2nd downlight"></label>
+      <label class="f">Fitting type<input id="f-fit" value="${esc(l.fitting)}" placeholder="e.g. 1200mm LED batten"></label>
+      <div id="ph-lightPhotos">${photos(draft.lightPhotos,"lightPhotos",{edit:true})}</div>
+      ${addPhoto("lightPhotos","+ Photo of the light")}
+      <div class="row"><label class="f">CB number<input id="f-cb" inputmode="numeric" value="${esc(l.cb)}" placeholder="Optional"></label>
         <label class="f">Phase<select id="f-phase">${["","L1","L2","L3"].map(p=>`<option ${p===l.phase?"selected":""}>${p}</option>`).join("")}</select></label></div>
       <div id="ph-cbPhotos">${photos(draft.cbPhotos,"cbPhotos",{edit:true})}</div>
       ${addPhoto("cbPhotos","+ Photo of the breaker")}
@@ -375,7 +389,6 @@ editLight(code){
       <label class="f">Notes<textarea id="f-notes" placeholder="Anything the next person should know">${esc(l.notes)}</textarea></label>
       ${ex?"":`<label class="f">What did you do today?<input id="f-job" placeholder="e.g. Replaced driver"></label>`}
       <button class="primary">${ex?"Save changes":"Save light "+esc(code)}</button>
-      <p class="note">No board yet? Save anyway. It goes on the "Waiting for a board" list until you link it.</p>
     </section>
   </form>`;
 },
@@ -393,10 +406,10 @@ make(){
   return `${back()}
   <section class="panel">
     <h2>Make QR tags</h2>
-    <p class="muted">Blank tags for boards or lights. You decide which when you first scan one. Works with no internet.</p>
+    <p class="muted">Blank tags: a QR code and a number. Use them on boards or lights, you decide when you scan one. Works with no internet.</p>
     <div class="row">
       <label class="f">First number<input id="m-start" inputmode="numeric" value="${nextNumber()}"></label>
-      <label class="f">How many<select id="m-count">${[14,28,56,84].map(n=>`<option ${n===28?"selected":""}>${n}</option>`).join("")}</select></label>
+      <label class="f">How many (40 per page)<select id="m-count">${[20,40,80,120].map(n=>`<option ${n===40?"selected":""}>${n}</option>`).join("")}</select></label>
     </div>
     <p class="note" id="m-warn"></p>
     ${printButtons()}
@@ -423,12 +436,13 @@ function linkArea(){
 }
 function linkBoard(code){
   if(board(code)){
+    if(view.name==="linkLight"){ const rec={...draft,board:code,history:[{d:today(),t:"Tagged."}]}; DB.lights.push(rec); save(); toast(`Light ${rec.code} linked to ${board(code).name}`); return go("light",rec.code); }
     if(view.name==="editLight"){ draft.board=code; $("#link-area").innerHTML=linkArea(); toast(`Linked to ${board(code).name}. Now add the CB number.`); $("#f-cb")?.focus(); }
     else { const l=light(view.arg); l.board=code; save(); toast(`Linked to ${board(code).name}. Add the CB number.`); go("editLight",l.code); }
     return;
   }
   if(light(code)) return toast(`${code} is a light tag. Scan the tag on the board.`);
-  toast(`${code} isn't set up as a board yet. Save this light, then scan that tag and choose "A board".`);
+  toast(`${code} isn't set up as a board yet. Tap "Save, link later", then set up that board.`);
 }
 function render(){ $("#app").innerHTML=V[view.name](view.arg); if(view.name==="make") updateSheet(); }
 function refreshPhotos(key){ const el=$("#ph-"+key); if(el) el.innerHTML=photos(draft[key],key,{edit:true}); }
@@ -462,7 +476,7 @@ const qrText = n => "LIGHT TRACER "+n;
 function nextNumber(){ return Math.max(1000, DB.lastPrinted||0, ...DB.lights.map(t=>+t.code||0), ...DB.boards.map(b=>+b.code||0)) + 1; }
 function sheetHTML(start,count){
   let h=`<div class="sheet">`;
-  for(let n=start;n<start+count;n++) h+=`<div class="tagl">${QR.svg(qrText(n))}<span class="n">${n}</span><span class="k">LIGHT TRACER</span></div>`;
+  for(let n=start;n<start+count;n++) h+=`<div class="tagl">${QR.svg(qrText(n))}<span class="n">${n}</span></div>`;
   return h+`</div>`;
 }
 function printButtons(){
@@ -480,22 +494,20 @@ function updateSheet(){
 }
 function markPrinted(){ const [s,c]=sheetRange(); if(view.name==="make"){ DB.lastPrinted=Math.max(DB.lastPrinted||0,s+c-1); save(); } }
 function drawPage(start,count){
-  const W=1240,H=1754,cols=4,rows=7,mx=60,my=100,cw=(W-2*mx)/cols,ch=(H-my-60)/rows;
+  const W=1240,H=1754,cols=5,rows=8,mx=50,my=60,cw=(W-2*mx)/cols,ch=(H-my-50)/rows;
   const c=document.createElement("canvas"); c.width=W; c.height=H; const g=c.getContext("2d");
-  g.fillStyle="#fff"; g.fillRect(0,0,W,H); g.fillStyle="#111"; g.font="bold 28px Arial"; g.fillText("LIGHT TRACER - QR tags",mx,60);
-  g.font="16px Arial"; g.textAlign="right"; g.fillText("Stick on a board or a light, then scan it to set it up.",W-mx,60); g.textAlign="left";
+  g.fillStyle="#fff"; g.fillRect(0,0,W,H); 
   for(let i=0;i<count;i++){
     const n=start+i, x=mx+(i%cols)*cw, y=my+Math.floor(i/cols)*ch;
     g.setLineDash([8,6]); g.strokeStyle="#999"; g.lineWidth=2; g.strokeRect(x+8,y+8,cw-16,ch-16); g.setLineDash([]);
-    const q=QR.encode(qrText(n)), m=Math.floor(150/(q.size+8)), qs=m*(q.size+8), qx=Math.round(x+(cw-qs)/2), qy=Math.round(y+20);
+    const q=QR.encode(qrText(n)), m=Math.floor(152/(q.size+8)), qs=m*(q.size+8), qx=Math.round(x+(cw-qs)/2), qy=Math.round(y+20);
     g.fillStyle="#000"; for(let yy=0;yy<q.size;yy++) for(let xx=0;xx<q.size;xx++) if(q.dark(xx,yy)) g.fillRect(qx+(xx+4)*m,qy+(yy+4)*m,m,m);
-    g.textAlign="center"; g.font="bold 34px 'Courier New', monospace"; g.fillText(String(n),x+cw/2,qy+qs+30);
-    g.fillStyle="#f1b81f"; g.fillRect(x+cw/2-70,qy+qs+42,140,24); g.fillStyle="#111"; g.font="bold 15px Arial"; g.fillText("LIGHT TRACER",x+cw/2,qy+qs+60); g.textAlign="left";
+    g.textAlign="center"; g.font="bold 36px 'Courier New', monospace"; g.fillText(String(n),x+cw/2,qy+qs+30); g.textAlign="left";
   }
   return c;
 }
 async function makePDF(){
-  const [start,count]=sheetRange(), per=28, pages=[];
+  const [start,count]=sheetRange(), per=40, pages=[];
   for(let p=0;p*per<count;p++){
     const c=drawPage(start+p*per,Math.min(per,count-p*per));
     const b=await new Promise(r=>c.toBlob(r,"image/jpeg",.95));
@@ -550,6 +562,8 @@ document.addEventListener("click",async e=>{
     case "scan": return scan();
     case "link-scan": return scan(linkBoard);
     case "link-type": { const c=normalise($("#link-num").value); return c?linkBoard(c):toast("Type the number on the board's tag."); }
+    case "assign-scan": return scan(c=>{ if(light(c)||board(c)) return toast(`Tag ${c} is already in use. Use a blank tag.`); $("#b-code").value=c; toast(`Tag ${c} will be this board's tag`); });
+    case "save-unlinked": { DB.lights.push({...draft,history:[{d:today(),t:"Tagged."}]}); await save(); toast(`Light ${draft.code} saved. Link it when you get to the board.`); return go("light",draft.code); }
     case "unlink": draft.board=""; $("#link-area").innerHTML=linkArea(); return;
     case "print": markPrinted(); window.print(); return;
     case "dl-pdf": return downloadPDF();
@@ -580,6 +594,7 @@ document.addEventListener("submit",async e=>{
   }
   if(f.id==="log-form"){ const v=$("#log-text").value.trim(); if(!v) return; light(view.arg).history.push({d:today(),t:v}); await save(); toast("Logged"); return render(); }
   if(f.id==="board-form"){
+    if(!draft.code){ const c=normalise($("#b-code").value); if(!c) return toast("Scan or type the board's tag number."); if(light(c)||board(c)) return toast(`Tag ${c} is already in use. Use a blank tag.`); draft.code=c; }
     const rec={...draft,name:$("#b-name").value.trim(),location:$("#b-loc").value.trim(),fedFrom:$("#b-fed").value.trim(),notes:$("#b-notes").value.trim()};
     const i=DB.boards.findIndex(b=>b.code===rec.code); if(i<0) DB.boards.push(rec); else DB.boards[i]=rec;
     await save(); toast(i<0?`Board ${rec.code} saved`:"Saved"); return go("board",rec.code);
@@ -588,7 +603,7 @@ document.addEventListener("submit",async e=>{
     const rec={...draft,cb:$("#f-cb").value.trim(),phase:$("#f-phase").value,location:$("#f-loc").value.trim(),fitting:$("#f-fit").value.trim(),notes:$("#f-notes").value.trim()};
     const i=DB.lights.findIndex(l=>l.code===rec.code);
     if(i<0){ rec.history=[{d:today(),t:$("#f-job").value.trim()||"Tagged."}]; DB.lights.push(rec); } else DB.lights[i]=rec;
-    await save(); toast(rec.board?`Light ${rec.code} saved`:`Light ${rec.code} saved. Scan its board's tag when you get there.`); return go("light",rec.code);
+    await save(); toast("Saved"); return go("light",rec.code);
   }
 });
 
