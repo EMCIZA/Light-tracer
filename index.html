@@ -101,6 +101,11 @@ label.f textarea{min-height:64px;resize:vertical}
 .linked{display:flex;gap:12px;align-items:center;border:2px solid var(--accent);border-radius:8px;padding:10px 12px}
 .linked .t{flex:1;min-width:0}.linked .t b{display:block}.linked .t span{font-size:14px;color:var(--muted)}
 .linked button{padding:6px 10px;font-size:14px}
+#scanner{position:fixed;inset:0;background:#000;z-index:50;display:flex;flex-direction:column}
+#scan-video{flex:1;min-height:0;width:100%;object-fit:cover}
+#scanner .aim{position:absolute;left:50%;top:42%;width:min(62vw,300px);aspect-ratio:1;transform:translate(-50%,-50%);border:3px solid var(--label);border-radius:14px;box-shadow:0 0 0 100vmax rgba(0,0,0,.35)}
+#scanner .scan-ui{position:absolute;left:0;right:0;bottom:0;padding:16px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:12px;color:#fff;text-align:center;font-weight:600}
+#scanner .scan-ui button{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.3)}
 </style>
 
 <div class="wrap">
@@ -115,6 +120,11 @@ label.f textarea{min-height:64px;resize:vertical}
 </div>
 <div id="toast" hidden></div>
 <div id="viewer" hidden><img id="viewer-img" alt="Photo, full size"></div>
+<div id="scanner" hidden>
+  <video id="scan-video" playsinline muted autoplay></video>
+  <div class="aim" aria-hidden="true"></div>
+  <div class="scan-ui"><p>Point the camera at the QR tag</p><div class="row"><button id="scan-photo">Take a photo instead</button><button id="scan-cancel">Cancel</button></div></div>
+</div>
 <input type="file" id="scan-input" accept="image/*" capture="environment" hidden>
 
 <script>
@@ -168,6 +178,230 @@ const QR=(()=>{
   function svg(text){const q=encode(text),b=4,s=q.size+b*2;let d="";for(let y=0;y<q.size;y++)for(let x=0;x<q.size;x++)if(q.dark(x,y))d+=`M${x+b} ${y+b}h1v1h-1z`;
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${s} ${s}" shape-rendering="crispEdges"><rect width="${s}" height="${s}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;}
   return {encode,svg};
+})();
+</script>
+<script>
+/* Minimal QR decoder for photos (versions 1-10, all error-correction levels). Works offline. */
+const QRDecode=(()=>{
+  /* ---- GF(256) and Reed-Solomon error correction ---- */
+  const EXP=new Array(512),LOG=new Array(256);
+  {let x=1;for(let i=0;i<255;i++){EXP[i]=x;LOG[x]=i;x<<=1;if(x&256)x^=0x11d;}for(let i=255;i<512;i++)EXP[i]=EXP[i-255];}
+  const mul=(a,b)=>a&&b?EXP[LOG[a]+LOG[b]]:0;
+  const div=(a,b)=>a?EXP[(LOG[a]+255-LOG[b])%255]:0;
+  const pow=(x,p)=>EXP[(((LOG[x]*p)%255)+255)%255];
+  const inv=x=>EXP[255-LOG[x]];
+  const pEval=(p,x)=>{let y=p[0];for(let i=1;i<p.length;i++)y=mul(y,x)^p[i];return y;};
+  const pScale=(p,x)=>p.map(c=>mul(c,x));
+  const pAdd=(p,q)=>{const r=new Array(Math.max(p.length,q.length)).fill(0);p.forEach((c,i)=>r[i+r.length-p.length]=c);q.forEach((c,i)=>r[i+r.length-q.length]^=c);return r;};
+  const pMul=(p,q)=>{const r=new Array(p.length+q.length-1).fill(0);for(let j=0;j<q.length;j++)for(let i=0;i<p.length;i++)r[i+j]^=mul(p[i],q[j]);return r;};
+  const pDivRem=(a,b)=>{const o=a.slice();for(let i=0;i<a.length-(b.length-1);i++){const c=o[i];if(c)for(let j=1;j<b.length;j++)if(b[j])o[i+j]^=mul(b[j],c);}return o.slice(o.length-(b.length-1));};
+  function rsCorrect(msg,nsym){
+    const synd=[0];for(let i=0;i<nsym;i++)synd.push(pEval(msg,pow(2,i)));
+    if(synd.every(s=>s===0))return msg.slice(0,msg.length-nsym);
+    // Berlekamp-Massey
+    let loc=[1],old=[1];
+    for(let i=0;i<nsym;i++){const K=i+1;let d=synd[K];for(let j=1;j<loc.length;j++)d^=mul(loc[loc.length-1-j],synd[K-j]);old=old.concat([0]);
+      if(d){if(old.length>loc.length){const nl=pScale(old,d);old=pScale(loc,inv(d));loc=nl;}loc=pAdd(loc,pScale(old,d));}}
+    while(loc.length&&loc[0]===0)loc.shift();
+    const errs=loc.length-1;if(errs*2>nsym)return null;
+    const rl=loc.slice().reverse(),pos=[];
+    for(let i=0;i<msg.length;i++)if(pEval(rl,pow(2,i))===0)pos.push(msg.length-1-i);
+    if(pos.length!==errs)return null;
+    // Forney
+    const coef=pos.map(p=>msg.length-1-p);
+    let eloc=[1];coef.forEach(c=>{eloc=pMul(eloc,pAdd([1],[pow(2,c),0]));});
+    const eval_=pDivRem(pMul(synd.slice().reverse(),eloc),[1].concat(new Array(eloc.length).fill(0))).reverse();
+    const X=coef.map(c=>pow(2,c)),out=msg.slice();
+    for(let i=0;i<X.length;i++){const xi=inv(X[i]);let lp=1;for(let j=0;j<X.length;j++)if(j!==i)lp=mul(lp,1^mul(xi,X[j]));
+      if(!lp)return null;const y=mul(X[i],pEval(eval_.slice().reverse(),xi));out[pos[i]]^=div(y,lp);}
+    for(let i=1;i<=nsym;i++)if(pEval(out,pow(2,i-1))!==0)return null;
+    return out.slice(0,msg.length-nsym);
+  }
+
+  /* ---- QR structure ---- */
+  const ECC={L:[0,7,10,15,20,26,18,20,24,30,18],M:[0,10,16,26,18,24,16,18,22,22,26],Q:[0,13,22,18,26,18,24,18,22,20,24],H:[0,17,28,22,16,22,28,26,26,24,28]};
+  const BLK={L:[0,1,1,1,1,1,2,2,2,2,4],M:[0,1,1,1,2,2,4,4,4,5,5],Q:[0,1,1,2,2,4,4,6,6,8,8],H:[0,1,1,2,4,4,4,5,6,8,8]};
+  const raw=v=>{let r=(16*v+128)*v+64;if(v>=2){const n=Math.floor(v/7)+2;r-=(25*n-10)*n-55;if(v>=7)r-=36;}return r;};
+  const alignPos=v=>{if(v===1)return[];const n=v*4+17,na=Math.floor(v/7)+2,step=Math.ceil((v*4+4)/(na*2-2))*2,p=[6];for(let x=n-7;p.length<na;x-=step)p.splice(1,0,x);return p;};
+  function funcMask(v){
+    const n=v*4+17,F=[...Array(n)].map(()=>new Uint8Array(n)),s=(x,y)=>{if(x>=0&&y>=0&&x<n&&y<n)F[y][x]=1;};
+    for(let i=0;i<n;i++){s(6,i);s(i,6);}
+    for(const [cx,cy] of [[3,3],[n-4,3],[3,n-4]])for(let dy=-4;dy<=4;dy++)for(let dx=-4;dx<=4;dx++)s(cx+dx,cy+dy);
+    const ap=alignPos(v),na=ap.length;ap.forEach((a,i)=>ap.forEach((b,j)=>{if((i===0&&j===0)||(i===0&&j===na-1)||(i===na-1&&j===0))return;for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++)s(a+dx,b+dy);}));
+    for(let i=0;i<=8;i++){s(8,i);s(i,8);}for(let i=0;i<8;i++){s(n-1-i,8);s(8,n-1-i);}
+    if(v>=7)for(let i=0;i<18;i++){const a=n-11+i%3,b=Math.floor(i/3);s(a,b);s(b,a);}
+    return F;
+  }
+  const FORMATS=[];for(let d=0;d<32;d++){let r=d;for(let i=0;i<10;i++)r=(r<<1)^((r>>>9)*0x537);FORMATS.push([((d<<10)|r)^0x5412,d]);}
+  const MASKS=[(x,y)=>(x+y)%2===0,(x,y)=>y%2===0,(x,y)=>x%3===0,(x,y)=>(x+y)%3===0,(x,y)=>(Math.floor(x/3)+Math.floor(y/2))%2===0,(x,y)=>x*y%2+x*y%3===0,(x,y)=>(x*y%2+x*y%3)%2===0,(x,y)=>((x+y)%2+x*y%3)%2===0];
+  const bitcount=x=>{let c=0;while(x){c+=x&1;x>>>=1;}return c;};
+
+  /* decode a module grid M[y][x] (true = dark) */
+  function decodeGrid(M){
+    const n=M.length,v=(n-17)/4;if(v<1||v>10||v%1)return null;
+    const g=(x,y)=>M[y][x]?1:0;
+    let b1=0,b2=0;
+    const r1=[];for(let i=0;i<=5;i++)r1.push(g(8,i));r1.push(g(8,7),g(8,8),g(7,8));for(let i=9;i<15;i++)r1.push(g(14-i,8));
+    const r2=[];for(let i=0;i<8;i++)r2.push(g(n-1-i,8));for(let i=8;i<15;i++)r2.push(g(8,n-15+i));
+    r1.forEach((b,i)=>b1|=b<<i);r2.forEach((b,i)=>b2|=b<<i);
+    let best=null,bd=99;for(const [f,d] of FORMATS){const e=Math.min(bitcount(f^b1),bitcount(f^b2));if(e<bd){bd=e;best=d;}}
+    if(bd>3)return null;
+    const ecl=["M","L","H","Q"][best>>3],mask=best&7,F=funcMask(v);
+    const bits=[];
+    for(let right=n-1;right>=1;right-=2){if(right===6)right=5;for(let vert=0;vert<n;vert++)for(let j=0;j<2;j++){const x=right-j,up=((right+1)&2)===0,y=up?n-1-vert:vert;if(!F[y][x])bits.push(g(x,y)^(MASKS[mask](x,y)?1:0));}}
+    const total=Math.floor(raw(v)/8),cw=[];for(let i=0;i<total;i++){let b=0;for(let k=0;k<8;k++)b=(b<<1)|bits[i*8+k];cw.push(b);}
+    const nb=BLK[ecl][v],el=ECC[ecl][v],ns=nb-total%nb,sl=Math.floor(total/nb);
+    const blocks=[...Array(nb)].map((_,i)=>[]);let k=0;
+    for(let i=0;i<sl+1;i++)for(let j=0;j<nb;j++){if(i===sl-el&&j<ns)continue;blocks[j].push(cw[k++]);}
+    // blocks: short ones have sl, long ones sl+1; reorder so data then ecc
+    const data=[];
+    for(let j=0;j<nb;j++){const b=blocks[j];const fixed=rsCorrect(b,el);if(!fixed)return null;data.push(...fixed);}
+    // parse segments
+    let p=0;const rd=n2=>{let r=0;for(let i=0;i<n2;i++){const byte=data[(p>>3)];if(byte===undefined)return -1;r=(r<<1)|((byte>>(7-(p&7)))&1);p++;}return r;};
+    const AN="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";let out=[],text="";
+    while(p+4<=data.length*8){const mode=rd(4);if(mode<=0)break;
+      if(mode===1){let c=rd(v<10?10:12);while(c>=3){const d=rd(10);text+=String(d).padStart(3,"0");c-=3;}if(c===2)text+=String(rd(7)).padStart(2,"0");else if(c===1)text+=String(rd(4));}
+      else if(mode===2){let c=rd(v<10?9:11);while(c>=2){const d=rd(11);text+=AN[Math.floor(d/45)]+AN[d%45];c-=2;}if(c===1)text+=AN[rd(6)];}
+      else if(mode===4){const c=rd(v<10?8:16);const bytes=[];for(let i=0;i<c;i++)bytes.push(rd(8));try{text+=new TextDecoder().decode(new Uint8Array(bytes));}catch{text+=String.fromCharCode(...bytes);}}
+      else if(mode===7){rd(8);}
+      else break;}
+    return text||null;
+  }
+
+  function formatDist(M){const n=M.length,g=(x,y)=>M[y][x]?1:0;let b1=0;const r1=[];for(let i=0;i<=5;i++)r1.push(g(8,i));r1.push(g(8,7),g(8,8),g(7,8));for(let i=9;i<15;i++)r1.push(g(14-i,8));r1.forEach((b,i)=>b1|=b<<i);let bd=99;for(const [f] of FORMATS)bd=Math.min(bd,bitcount(f^b1));return bd;}
+  /* ---- image: binarize (block-based, like ZXing's hybrid binarizer) ---- */
+  function binarize(gray,w,h){
+    const B=8,bw=Math.ceil(w/B),bh=Math.ceil(h/B),bp=new Float32Array(bw*bh),out=new Uint8Array(w*h);
+    for(let by=0;by<bh;by++)for(let bx=0;bx<bw;bx++){let mn=255,mx=0,sum=0,c=0;
+      for(let y=by*B;y<Math.min(h,by*B+B);y++)for(let x=bx*B;x<Math.min(w,bx*B+B);x++){const v=gray[y*w+x];sum+=v;c++;if(v<mn)mn=v;if(v>mx)mx=v;}
+      let avg=sum/c;
+      if(mx-mn<=24){avg=mn/2;if(by>0&&bx>0){const nb=(bp[(by-1)*bw+bx]+2*bp[by*bw+bx-1]+bp[(by-1)*bw+bx-1])/4;if(mn<nb)avg=nb;}}
+      bp[by*bw+bx]=avg;}
+    for(let by=0;by<bh;by++)for(let bx=0;bx<bw;bx++){let s=0,c=0;
+      for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){const yy=Math.min(bh-1,Math.max(0,by+dy)),xx=Math.min(bw-1,Math.max(0,bx+dx));s+=bp[yy*bw+xx];c++;}
+      const t=s/c;
+      for(let y=by*B;y<Math.min(h,by*B+B);y++)for(let x=bx*B;x<Math.min(w,bx*B+B);x++)out[y*w+x]=gray[y*w+x]<=t?1:0;}
+    return out;
+  }
+
+  /* ---- finder patterns ---- */
+  function findFinders(bin,w,h){
+    const inb=(x,y)=>x>=0&&y>=0&&x<w&&y<h, at=(x,y)=>bin[y*w+x];
+    const ok=c=>{const t=c[0]+c[1]+c[2]+c[3]+c[4];if(t<7)return false;const m=t/7,v=m/1.5;return Math.abs(m-c[0])<v&&Math.abs(m-c[1])<v&&Math.abs(3*m-c[2])<3*v&&Math.abs(m-c[3])<v&&Math.abs(m-c[4])<v;};
+    function cross(cx,cy,dx,dy,max){
+      const c=[0,0,0,0,0];let i=0,x,y;
+      const P=k=>{x=Math.round(cx-k*dx);y=Math.round(cy-k*dy);},N=k=>{x=Math.round(cx+k*dx);y=Math.round(cy+k*dy);};
+      P(i);while(inb(x,y)&&at(x,y)===1){c[2]++;i++;P(i);}if(!inb(x,y))return null;
+      while(inb(x,y)&&at(x,y)===0&&c[1]<=max){c[1]++;i++;P(i);}if(!inb(x,y)||c[1]>max)return null;
+      while(inb(x,y)&&at(x,y)===1&&c[0]<=max){c[0]++;i++;P(i);}if(c[0]>max)return null;
+      i=1;N(i);while(inb(x,y)&&at(x,y)===1){c[2]++;i++;N(i);}if(!inb(x,y))return null;
+      while(inb(x,y)&&at(x,y)===0&&c[3]<max){c[3]++;i++;N(i);}if(!inb(x,y)||c[3]>=max)return null;
+      while(inb(x,y)&&at(x,y)===1&&c[4]<max){c[4]++;i++;N(i);}if(c[4]>=max)return null;
+      if(!ok(c))return null;
+      return [i-c[4]-c[3]-c[2]/2,c[0]+c[1]+c[2]+c[3]+c[4]];
+    }
+    const cands=[];
+    function handle(c,xEnd,y){
+      const tot=c[0]+c[1]+c[2]+c[3]+c[4],cx=xEnd-c[4]-c[3]-c[2]/2,max=c[2]*2;
+      const v=cross(cx,y,0,1,max);if(!v)return;const cy=y+v[0];
+      const hz=cross(cx,cy,1,0,max);if(!hz)return;const fx=cx+hz[0];
+      if(Math.abs(v[1]-tot)>tot*0.6)return;
+      const ms=(tot+v[1]+hz[1])/21;
+      for(const k of cands){if(Math.abs(k.x-fx)<=Math.max(k.m,ms)*2.5&&Math.abs(k.y-cy)<=Math.max(k.m,ms)*2.5&&Math.abs(k.m-ms)<Math.max(k.m,ms)*0.6){k.x=(k.x*k.n+fx)/(k.n+1);k.y=(k.y*k.n+cy)/(k.n+1);k.m=(k.m*k.n+ms)/(k.n+1);k.n++;return;}}
+      cands.push({x:fx,y:cy,m:ms,n:1});
+    }
+    for(let y=0;y<h;y++){const c=[0,0,0,0,0];let st=0;
+      for(let x=0;x<w;x++){
+        if(at(x,y)===1){if(st&1)st++;c[st]++;}
+        else if((st&1)===0){
+          if(st===4){if(ok(c))handle(c,x,y);c[0]=c[2];c[1]=c[3];c[2]=c[4];c[3]=1;c[4]=0;st=3;}
+          else{st++;c[st]++;}
+        } else c[st]++;
+      }
+      if(st===4&&ok(c))handle(c,w,y);
+    }
+    return cands;
+  }
+  function pickThree(cands){
+    const maxN=Math.max(0,...cands.map(c=>c.n));
+    let list=cands.filter(c=>c.n>=Math.max(2,maxN*0.2));if(list.length<3)list=cands.slice();
+    list=list.sort((a,b)=>b.n-a.n).slice(0,10);
+    const d=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y),out=[];
+    for(let i=0;i<list.length;i++)for(let j=i+1;j<list.length;j++)for(let k=j+1;k<list.length;k++){
+      const p=[list[i],list[j],list[k]],ms=p.map(q=>q.m),mm=Math.max(...ms),mn=Math.min(...ms);if(mm>mn*1.8)continue;
+      const ds=[[d(p[0],p[1]),2],[d(p[0],p[2]),1],[d(p[1],p[2]),0]].sort((a,b)=>a[0]-b[0]);
+      const [a,b,c]=ds;if(a[0]<mn*7)continue;
+      const geo=Math.abs(a[0]-b[0])/b[0]+Math.abs(c[0]*c[0]-a[0]*a[0]-b[0]*b[0])/(c[0]*c[0]);
+      const weak=1-Math.min(...p.map(q=>q.n))/maxN;
+      const score=geo+(mm-mn)/mm*0.5+weak*0.5;
+      if(geo>1.2)continue;
+      const tl=p[c[1]],o=p.filter(q=>q!==tl);let[tr,bl]=o;
+      if((tr.x-tl.x)*(bl.y-tl.y)-(tr.y-tl.y)*(bl.x-tl.x)<0)[tr,bl]=[bl,tr];
+      out.push({score,tl,tr,bl});}
+    return out.sort((a,b)=>a.score-b.score).slice(0,3);
+  }
+  /* ---- perspective ---- */
+  function solve(A,b){const n=b.length;for(let i=0;i<n;i++){let mx=i;for(let r=i+1;r<n;r++)if(Math.abs(A[r][i])>Math.abs(A[mx][i]))mx=r;[A[i],A[mx]]=[A[mx],A[i]];[b[i],b[mx]]=[b[mx],b[i]];if(Math.abs(A[i][i])<1e-12)return null;
+    for(let r=i+1;r<n;r++){const f=A[r][i]/A[i][i];for(let c=i;c<n;c++)A[r][c]-=f*A[i][c];b[r]-=f*b[i];}}
+    const x=new Array(n);for(let i=n-1;i>=0;i--){let s=b[i];for(let c=i+1;c<n;c++)s-=A[i][c]*x[c];x[i]=s/A[i][i];}return x;}
+  function homography(src,dst){const A=[],b=[];for(let i=0;i<4;i++){const[x,y]=src[i],[u,v]=dst[i];A.push([x,y,1,0,0,0,-u*x,-u*y]);b.push(u);A.push([0,0,0,x,y,1,-v*x,-v*y]);b.push(v);}
+    const h=solve(A,b);if(!h)return null;return (x,y)=>{const z=h[6]*x+h[7]*y+1;return[(h[0]*x+h[1]*y+h[2])/z,(h[3]*x+h[4]*y+h[5])/z];};}
+
+  function sampleGrid(bin,w,h,map,n){
+    const at=(x,y)=>{x=Math.round(x);y=Math.round(y);return x>=0&&y>=0&&x<w&&y<h?bin[y*w+x]:0;};
+    const M=[];for(let y=0;y<n;y++){const row=[];for(let x=0;x<n;x++){let s=0;for(const[dx,dy]of[[0.5,0.5],[0.35,0.35],[0.65,0.35],[0.35,0.65],[0.65,0.65]]){const[px,py]=map(x+dx,y+dy);s+=at(px,py);}row.push(s>=3);}M.push(row);}
+    return M;
+  }
+  function findAlign(bin,w,h,map3,ax,ay,mod){
+    // search near the predicted alignment centre for a dark dot ringed by light then dark (template follows the code's own axes)
+    const [px,py]=map3(ax,ay),at=(x,y)=>{x=Math.round(x);y=Math.round(y);return x>=0&&y>=0&&x<w&&y<h?bin[y*w+x]:0;};
+    const off=[];for(let j=-2;j<=2;j++)for(let i=-2;i<=2;i++){const q=map3(ax+i,ay+j);off.push([q[0]-px,q[1]-py,Math.max(Math.abs(i),Math.abs(j))===1?0:1]);}
+    let best=null,bs=-1;const R=Math.round(mod*5),st=Math.max(1,Math.round(mod/3));
+    for(let dy=-R;dy<=R;dy+=st)for(let dx=-R;dx<=R;dx+=st){const cx=px+dx,cy=py+dy;let s=0;for(const[ox,oy,want]of off)if(at(cx+ox,cy+oy)===want)s++;
+      if(s>bs||(s===bs&&Math.hypot(dx,dy)<Math.hypot(best[0]-px,best[1]-py))){bs=s;best=[cx,cy];}}
+    if(bs<21)return null;
+    // refine: centroid of the dark centre dot
+    let sx=0,sy=0,c=0;const r=Math.max(1,Math.round(mod*0.6));for(let y=-r;y<=r;y++)for(let x=-r;x<=r;x++)if(at(best[0]+x,best[1]+y)===1){sx+=x;sy+=y;c++;}
+    return c?[best[0]+sx/c,best[1]+sy/c]:best;
+  }
+  function decodeImage(gray,w,h){
+    const bin=binarize(gray,w,h),c=findFinders(bin,w,h);
+    for(const f of pickThree(c)){const r=tryTriple(bin,w,h,f);if(r)return r;}
+    return null;
+  }
+  function tryTriple(bin,w,h,f){
+    const {tl,tr,bl}=f,mod=(tl.m+tr.m+bl.m)/3;
+    const est=Math.round(((Math.hypot(tr.x-tl.x,tr.y-tl.y)+Math.hypot(bl.x-tl.x,bl.y-tl.y))/2)/mod)+7;
+    const tries=[];let base=est;switch(base&3){case 0:base++;break;case 2:base--;break;case 3:base-=2;break;}
+    for(const n of [base,base+4,base-4,base+8,base-8,25,21,29,33])if(n>=21&&n<=57&&!tries.includes(n))tries.push(n);
+    for(const n of tries){
+      const v=(n-17)/4,src3=[[3.5,3.5],[n-3.5,3.5],[3.5,n-3.5]],dst3=[[tl.x,tl.y],[tr.x,tr.y],[bl.x,bl.y]];
+      const br=[tr.x+bl.x-tl.x,tr.y+bl.y-tl.y];
+      const affine=homography([...src3,[n-3.5,n-3.5]],[...dst3,br]);if(!affine)continue;
+      const maps=[affine];
+      if(v>=2){const ap=alignPos(v),a=ap[ap.length-1]+0.5,pt=findAlign(bin,w,h,affine,a,a,mod);if(pt){const hm=homography([...src3,[a,a]],[...dst3,pt]);if(hm)maps.unshift(hm);}}
+      for(const map of maps){const M=sampleGrid(bin,w,h,map,n);const t=decodeGrid(M);if(t)return t;}
+    }
+    return null;
+  }
+  function debug(gray,w,h){const bin=binarize(gray,w,h),c=findFinders(bin,w,h),f=pickThree(c)[0];return {cands:c.length,strong:c.filter(k=>k.n>=2).length,picked:!!f,f,c:c.slice().sort((a,b)=>b.n-a.n).slice(0,6)};}
+  function toGray(data,w,h){const g=new Uint8Array(w*h);for(let i=0,j=0;i<w*h;i++,j+=4)g[i]=(data[j]*77+data[j+1]*150+data[j+2]*29)>>8;return g;}
+  /* decode from a canvas or image: tries a couple of scales */
+  function run(src,sx,sy,sw,sh,max){
+    const k=Math.min(2.5,max/Math.max(sw,sh)),w=Math.round(sw*k),h=Math.round(sh*k);
+    const c=document.createElement("canvas");c.width=w;c.height=h;const g=c.getContext("2d",{willReadFrequently:true});
+    g.imageSmoothingQuality="high";g.drawImage(src,sx,sy,sw,sh,0,0,w,h);
+    return decodeImage(toGray(g.getImageData(0,0,w,h).data,w,h),w,h);
+  }
+  /* decode from an image, canvas or video frame; quick=true for live video (fewer passes) */
+  function fromSource(src,quick){
+    const W=src.videoWidth||src.naturalWidth||src.width,H=src.videoHeight||src.naturalHeight||src.height;
+    const cw=W*0.55,ch=H*0.55,cx=(W-cw)/2,cy=(H-ch)/2;
+    const passes=quick?[[0,0,W,H,800],[cx,cy,cw,ch,800]]:[[0,0,W,H,900],[cx,cy,cw,ch,1000],[0,0,W,H,1600],[W*0.15,H*0.15,W*0.7,H*0.7,1400],[0,0,W,H,600]];
+    for(const p of passes){const r=run(src,...p);if(r)return r;}
+    return null;
+  }
+  return {decodeImage,decodeGrid,fromSource,toGray,debug,_rs:rsCorrect};
 })();
 </script>
 <script>
@@ -251,8 +485,32 @@ function photos(list,key,{edit=false,one=false}={}){
   return `<div class="photos${one&&list.length===1?" one":""}">${list.map((p,i)=>`<div class="ph"><img src="${p}" data-view alt="Photo ${i+1}">${edit?`<button type="button" data-del="${key}:${i}" aria-label="Remove photo">✕</button>`:""}</div>`).join("")}</div>`;
 }
 const addPhoto = (key,label) => `<label class="btn">${label}<input type="file" data-add="${key}" accept="image/*" multiple hidden></label>`;
-let scanCallback=null;
-function scan(cb){ scanCallback=cb||null; $("#scan-input").click(); }
+let scanCallback=null, stream=null, scanTimer=null;
+function photoScan(cb){ scanCallback=cb||null; $("#scan-input").click(); }
+/* accept only Light Tracer tags (or a bare number) */
+function tagFromText(t){ if(!t) return null; t=String(t).trim(); if(/^LIGHT TRACER\s*\d+$/i.test(t)||/^\d{1,8}$/.test(t)) return normalise(t); return "x"; }
+function gotTag(t,cb){
+  const code=tagFromText(t);
+  if(code==="x"){ toast("That QR code isn't a Light Tracer tag."); return false; }
+  try{ navigator.vibrate?.(60); }catch{}
+  (cb||open)(code); return true;
+}
+async function scan(cb){
+  if(FRAMED || !navigator.mediaDevices?.getUserMedia) return photoScan(cb);
+  try{ stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false}); }
+  catch{ toast("Camera not available, so take a photo of the tag."); return photoScan(cb); }
+  scanCallback=cb||null;
+  const v=$("#scan-video"); v.srcObject=stream; $("#scanner").hidden=false; try{ await v.play(); }catch{}
+  let busy=false;
+  const tick=()=>{
+    if(!stream) return;
+    if(!busy && v.readyState>=2 && v.videoWidth){ busy=true; let t=null; try{ t=QRDecode.fromSource(v,true); }catch{} busy=false;
+      if(t && tagFromText(t)!=="x"){ const c=scanCallback; stopScan(); gotTag(t,c); return; } }
+    scanTimer=setTimeout(tick,100);
+  };
+  tick();
+}
+function stopScan(){ clearTimeout(scanTimer); if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } const v=$("#scan-video"); if(v) v.srcObject=null; $("#scanner").hidden=true; }
 
 /* ---------- views ---------- */
 let view={name:"home"}, draft=null;
@@ -270,7 +528,7 @@ home(){
   <section class="panel">
     <h1>Scan a tag</h1>
     <p class="muted">Scan or type any tag number. A blank tag asks if it's on a board or a light. You can also search by board or place, like "DB-L3-A" or "kitchen".</p>
-    <button class="primary" id="scan">Scan QR from photo</button>
+    <button class="primary" id="scan">Scan a tag</button>
     <form class="lookup" id="lookup-form"><input id="lookup" type="search" autocomplete="off" placeholder="1001 or search" aria-label="Tag number or search"><button>Find</button></form>
     <div class="list" id="results" hidden></div>
   </section>
@@ -560,6 +818,8 @@ document.addEventListener("click",async e=>{
   switch(t.id){
     case "home-btn": return go("home");
     case "scan": return scan();
+    case "scan-cancel": return stopScan();
+    case "scan-photo": { const c=scanCallback; stopScan(); return photoScan(c); }
     case "link-scan": return scan(linkBoard);
     case "link-type": { const c=normalise($("#link-num").value); return c?linkBoard(c):toast("Type the number on the board's tag."); }
     case "assign-scan": return scan(c=>{ if(light(c)||board(c)) return toast(`Tag ${c} is already in use. Use a blank tag.`); $("#b-code").value=c; toast(`Tag ${c} will be this board's tag`); });
@@ -620,13 +880,13 @@ document.addEventListener("change",async e=>{
   if(t.id==="scan-input" && t.files[0]){
     const cb=scanCallback; scanCallback=null;
     try{
-      const img=new Image(); img.src=await resizeImage(t.files[0],1600); await img.decode();
+      const img=new Image(); img.src=await resizeImage(t.files[0],2400); await img.decode();
       const c=document.createElement("canvas"); c.width=img.width; c.height=img.height; const ctx=c.getContext("2d"); ctx.drawImage(img,0,0);
       let text=null;
       if("BarcodeDetector" in window){ try{ const r=await new BarcodeDetector({formats:["qr_code"]}).detect(c); text=r[0]?.rawValue; }catch{} }
+      if(!text){ try{ text=QRDecode.fromSource(c); }catch{} }
       if(!text && window.jsQR){ const d=ctx.getImageData(0,0,c.width,c.height); text=jsQR(d.data,c.width,c.height)?.data; }
-      const code=normalise(text);
-      if(code) (cb||open)(code); else toast("No QR code found. Get closer, or type the number.");
+      if(text) gotTag(text,cb); else toast("Couldn't read the QR code. Fill more of the photo with the tag, or type the number.");
     }catch{ toast("Couldn't read that photo."); }
     t.value="";
   }
