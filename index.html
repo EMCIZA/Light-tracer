@@ -599,8 +599,8 @@ async function identifyPhoto(file){
   const photo=await resizeImage(file,900), f=await featOf(photo), ranked=[];
   for(const T of DB.types){
     const refs=[...T.photos,...DB.lights.filter(l=>l.type===T.id).flatMap(l=>l.lightPhotos)];
-    let best=0; for(const r of refs){ const g=await featOf(r); if(f&&g) best=Math.max(best,Match.similarity(f,g)); }
-    ranked.push({id:T.id,score:refs.length?best:0});
+    let best=0,ref=null; for(const r of refs){ const g=await featOf(r); if(f&&g){ const sc=Match.similarity(f,g); if(sc>best){ best=sc; ref=r; } } }
+    ranked.push({id:T.id,score:refs.length?best:0,ref});
   }
   ranked.sort((a,b)=>b.score-a.score);
   idState={photo,ranked}; $("#toast").hidden=true; go("identify");
@@ -708,7 +708,10 @@ board(code){
 type(id){
   const T=ftype(id), ls=DB.lights.filter(l=>l.type===id), learned=ls.reduce((a,l)=>a+l.lightPhotos.length,0);
   draft={...T,photos:[...T.photos],driverPhotos:[...T.driverPhotos]};
-  return `${back()}
+  const ask=idState&&idState.picked===id&&!T.photos.includes(idState.photo);
+  const lightPics=ls.flatMap(l=>l.lightPhotos.map(ph=>({ph,code:l.code})));
+  return `${ask?`<button class="back" data-go="identify">← Back to results</button>`:back()}
+  ${ask?`<section class="panel"><h3>Is this the right fitting?</h3><div class="idphoto"><img src="${idState.photo}" alt="Your photo" data-view></div><p class="note">If it is, save your photo here so it matches better next time.</p><div class="row"><button class="primary" id="learn-yes">Yes, save my photo here</button><button id="learn-no">No, don't save it</button></div></section>`:""}
   <div class="row"><button data-go="editType" data-arg="${T.id}">Edit</button><button class="danger" id="del-type">Delete</button></div>
   <section class="panel">
     <span class="badge" style="align-self:flex-start">Fitting type</span>
@@ -721,8 +724,9 @@ type(id){
   </section>
   <section class="panel"><h3>Driver photos</h3><div id="ph-driverPhotos">${photos(draft.driverPhotos,"driverPhotos",{edit:true})}</div>${addPhoto("driverPhotos","+ Photo of the driver")}</section>
   <section class="panel"><h3>Photos of this fitting</h3>
-    <p class="note">Identify compares against these${learned?`, plus ${learned} photo${learned>1?"s":""} of lights set to this type`:""}. Several angles help.</p>
+    <p class="note">Identify compares against these. Several angles help. If a photo here isn't this fitting, tap its ✕ to remove it.</p>
     <div id="ph-photos">${photos(draft.photos,"photos",{edit:true})}</div>${addPhoto("photos","+ Add photos of this fitting")}</section>
+  ${lightPics.length?`<section class="panel"><h3>Also compared: photos of lights set to this type</h3><p class="note">To remove one, open that light and remove the photo there, or change its fitting type.</p><div class="photos">${lightPics.map(x=>`<div class="ph"><img src="${x.ph}" data-view alt="Light ${x.code}"><button type="button" data-open="${x.code}" style="left:4px;right:auto">${x.code}</button></div>`).join("")}</div></section>`:""}
   <section class="panel"><h3>Lights of this type</h3><div class="list">${ls.map(lightItem).join("")||`<div class="empty">No lights set to this type yet.</div>`}</div></section>`;
 },
 editType(id){
@@ -750,10 +754,12 @@ identify(){
   <section class="panel">
     <h2>Which fitting is it?</h2>
     <div class="idphoto"><img src="${idState.photo}" alt="Your photo" data-view></div>
-    ${r.length?`<p class="note">Best match first. Tap the right one to see its driver. That also saves your photo to it, so it matches better next time.</p>`:`<p class="note">No fitting types yet, so there's nothing to compare with. Save this photo as a new type.</p>`}
+    ${r.length?`<p class="note">Best match first. Each thumbnail is the saved photo it matched against. Tap the right one to see its driver.</p>`:`<p class="note">No fitting types yet, so there's nothing to compare with. Save this photo as a new type.</p>`}
   </section>
   ${r.length?`<section class="panel"><div class="list">${r.map((x,i)=>{const T=ftype(x.id),th=T.photos[0]||DB.lights.find(l=>l.type===T.id&&l.lightPhotos.length)?.lightPhotos[0];
-    return `<button class="item" data-pick="${T.id}">${th?`<img class="thumb" src="${th}" alt="">`:`<span class="thumb"></span>`}<span class="t"><b>${esc(T.name)}</b><span>${esc(T.driverModel||"Driver not recorded")}</span></span>${i===0&&x.score>0.55?`<span class="best">Best match</span>`:""}</button>`;}).join("")}</div></section>`:""}
+    const pic=x.ref||th, gap=r.length>1?x.score-r[1].score:1;
+    return `<button class="item" data-pick="${T.id}">${pic?`<img class="thumb" src="${pic}" alt="">`:`<span class="thumb"></span>`}<span class="t"><b>${esc(T.name)}</b><span>${esc(T.driverModel||"Driver not recorded")}</span></span>${i===0&&x.score>0.6?(gap>=0.05?`<span class="best">Best match</span>`:`<span class="badge">Close call</span>`):""}</button>`;}).join("")}</div></section>
+  ${r.length>1&&r[0].score-r[1].score<0.05?`<p class="note">The top two are close. Check the thumbnails. If a type shows a photo that isn't that fitting, open the type and remove it.</p>`:""}`:""}
   <section class="panel"><button data-go="editType" data-arg="from-photo">${r.length?"None of these, add a new type":"Save as a new fitting type"}</button></section>`;
 },
 editBoard(code){
@@ -972,7 +978,7 @@ document.addEventListener("click",async e=>{
   if(!t) return;
   if(t.dataset.go) return go(t.dataset.go,t.dataset.arg);
   if(t.dataset.type) return go("type",t.dataset.type);
-  if(t.dataset.pick){ const T=ftype(t.dataset.pick); if(idState&&!T.photos.includes(idState.photo)){ T.photos.push(idState.photo); if(T.photos.length>15) T.photos.splice(1,1); await save(); } toast(`Saved your photo to ${T.name}`); idState=null; return go("type",T.id); }
+  if(t.dataset.pick){ if(idState) idState.picked=t.dataset.pick; return go("type",t.dataset.pick); }
   if(t.dataset.open) return open(t.dataset.open);
   if(t.dataset.view!==undefined){ $("#viewer-img").src=t.src; $("#viewer").hidden=false; return; }
   if(t.dataset.del){ if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Remove"; return; } const [k,i]=t.dataset.del.split(":"); draft[k].splice(+i,1); refreshPhotos(k); if(view.name==="board"){ board(view.arg).photos=draft.photos; await save(); } if(view.name==="light"){ light(view.arg)[k]=draft[k]; await save(); } if(view.name==="type"){ ftype(view.arg)[k]=draft[k]; await save(); } return; }
@@ -980,6 +986,8 @@ document.addEventListener("click",async e=>{
     case "home-btn": return go("home");
     case "scan": return scan();
     case "identify": return $("#id-input").click();
+    case "learn-yes": { const T=ftype(view.arg); if(idState&&!T.photos.includes(idState.photo)){ T.photos.push(idState.photo); if(T.photos.length>15) T.photos.splice(0,1); await save(); } toast(`Saved your photo to ${T.name}`); idState=null; return render(); }
+    case "learn-no": idState=null; return render();
     case "del-type": {
       if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Tap again to delete"; return; }
       DB.lights.forEach(l=>{ if(l.type===view.arg) l.type=""; }); DB.types=DB.types.filter(x=>x.id!==view.arg); await save(); toast("Fitting type deleted"); return go("home");
