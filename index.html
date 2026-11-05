@@ -106,6 +106,9 @@ label.f textarea{min-height:64px;resize:vertical}
 #scanner .aim{position:absolute;left:50%;top:42%;width:min(62vw,300px);aspect-ratio:1;transform:translate(-50%,-50%);border:3px solid var(--label);border-radius:14px;box-shadow:0 0 0 100vmax rgba(0,0,0,.35)}
 #scanner .scan-ui{position:absolute;left:0;right:0;bottom:0;padding:16px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:12px;color:#fff;text-align:center;font-weight:600}
 #scanner .scan-ui button{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.3)}
+.thumb{width:64px;height:48px;object-fit:cover;border-radius:5px;border:1px solid var(--line);flex:0 0 auto;background:var(--bg)}
+.best{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--accent);color:var(--on-accent);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.idphoto img{width:100%;max-height:260px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block}
 </style>
 
 <div class="wrap">
@@ -125,6 +128,7 @@ label.f textarea{min-height:64px;resize:vertical}
   <div class="aim" aria-hidden="true"></div>
   <div class="scan-ui"><p>Point the camera at the QR tag</p><div class="row"><button id="scan-photo">Take a photo instead</button><button id="scan-cancel">Cancel</button></div></div>
 </div>
+<input type="file" id="id-input" accept="image/*" capture="environment" hidden>
 <input type="file" id="scan-input" accept="image/*" capture="environment" hidden>
 
 <script>
@@ -405,6 +409,63 @@ const QRDecode=(()=>{
 })();
 </script>
 <script>
+/* Offline photo matcher for light fittings. Finds the lit part of the fitting and describes its shape,
+   its surround and nearby edges, then compares against saved photos. */
+const Match=(()=>{
+  const N=128;
+  function features(img){
+    const W=img.naturalWidth||img.videoWidth||img.width,H=img.naturalHeight||img.videoHeight||img.height;
+    const k=N/Math.max(W,H),w=Math.max(8,Math.round(W*k)),h=Math.max(8,Math.round(H*k));
+    const c=document.createElement("canvas");c.width=w;c.height=h;const g=c.getContext("2d",{willReadFrequently:true});
+    g.drawImage(img,0,0,w,h);const d=g.getImageData(0,0,w,h).data;
+    const gray=new Float32Array(w*h),sat=new Float32Array(w*h);let mean=0;
+    for(let i=0,j=0;i<w*h;i++,j+=4){const r=d[j]/255,gg=d[j+1]/255,b=d[j+2]/255,mx=Math.max(r,gg,b),mn=Math.min(r,gg,b);gray[i]=0.3*r+0.59*gg+0.11*b;sat[i]=mx?(mx-mn)/mx:0;mean+=gray[i];}
+    mean/=w*h;
+    // bright pixels -> connected components -> pick the most fitting-like (big, bright, near centre)
+    const sorted=Array.from(gray).sort((a,b)=>b-a),thr=Math.min(0.985,Math.max(mean+0.1,sorted[Math.floor(w*h*0.004)]-0.06));
+    const lab=new Int32Array(w*h).fill(-1),comps=[];
+    for(let i=0;i<w*h;i++){if(gray[i]<thr||lab[i]>=0)continue;const q=[i];lab[i]=comps.length;let n=0,sx=0,sy=0,sb=0;
+      while(q.length){const p=q.pop(),x=p%w,y=(p-x)/w;n++;sx+=x;sy+=y;sb+=gray[p];
+        for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]])if(nx>=0&&ny>=0&&nx<w&&ny<h){const np=ny*w+nx;if(lab[np]<0&&gray[np]>=thr){lab[np]=comps.length;q.push(np);}}}
+      comps.push({id:comps.length,n,cx:sx/n,cy:sy/n,b:sb/n});}
+    let best=null,bs=-1;for(const cp of comps){if(cp.n<6)continue;const dc=Math.hypot(cp.cx/w-0.5,cp.cy/h-0.5);const s=cp.n*(1.2-dc)*cp.b;if(s>bs){bs=s;best=cp;}}
+    let elong=1,fill=1,area=0,ring=1,ori=new Float32Array(8),rect=0;
+    if(best){
+      let a=0,b=0,cc=0;const pts=[];
+      for(let i=0;i<w*h;i++)if(lab[i]===best.id){const x=i%w,y=(i-x)/w,dx=x-best.cx,dy=y-best.cy;a+=dx*dx;b+=dy*dy;cc+=dx*dy;pts.push([dx,dy]);}
+      const n=best.n;a/=n;b/=n;cc/=n;const t=(a+b)/2,q=Math.sqrt(Math.max(0,((a-b)/2)**2+cc*cc)),l1=t+q,l2=Math.max(0.05,t-q);
+      elong=Math.sqrt(l1/l2);area=n/(w*h);
+      // fill vs. ellipse of same moments (ellipse ~1, rectangle ~1.27)
+      fill=n/(Math.PI*4*Math.sqrt(l1*l2)+1e-6);
+      // rectangularity along principal axis: share of points within the moment box
+      const th=0.5*Math.atan2(2*cc,a-b),co=Math.cos(th),si=Math.sin(th),A=Math.sqrt(3*l1),B=Math.sqrt(3*l2);let inb=0;
+      for(const[dx,dy]of pts){const u=dx*co+dy*si,v=-dx*si+dy*co;if(Math.abs(u)<=A&&Math.abs(v)<=B)inb++;}rect=inb/n;
+      // surround: brightness just outside the lit area relative to the whole photo (dark housing vs ceiling)
+      const R=Math.sqrt(l1)*2.2,Rb=Math.sqrt(l2)*2.2;let rs=0,rn=0;
+      for(let y=Math.max(0,Math.floor(best.cy-R-6));y<Math.min(h,best.cy+R+6);y++)for(let x=Math.max(0,Math.floor(best.cx-R-6));x<Math.min(w,best.cx+R+6);x++){
+        const dx=x-best.cx,dy=y-best.cy,u=(dx*co+dy*si)/(A*1.0),v=(-dx*si+dy*co)/(B*1.0),r=Math.max(Math.abs(u),Math.abs(v));
+        if(r>1.15&&r<1.9&&lab[y*w+x]!==best.id){rs+=gray[y*w+x];rn++;}}
+      ring=rn?(rs/rn)/(mean+0.05):1;
+      // edge directions near the fitting, measured relative to its long axis
+      for(let y=Math.max(1,Math.floor(best.cy-R*1.3));y<Math.min(h-1,best.cy+R*1.3);y++)for(let x=Math.max(1,Math.floor(best.cx-R*1.3));x<Math.min(w-1,best.cx+R*1.3);x++){
+        const p=(yy,xx)=>gray[yy*w+xx],gx=p(y,x+1)-p(y,x-1),gy=p(y+1,x)-p(y-1,x),m=Math.hypot(gx,gy);if(m<0.08)continue;
+        let an=Math.atan2(gy,gx)-th;an=((an%Math.PI)+Math.PI)%Math.PI;ori[Math.min(7,Math.floor(an/Math.PI*8))]+=m;}
+      let s=0;for(const v of ori)s+=v;if(s)for(let i=0;i<8;i++)ori[i]/=s;
+    }
+    return {elong,fill,area,ring,rect,ori:Array.from(ori),found:!!best};
+  }
+  const lg=(a,b,s)=>Math.min(1,Math.abs(Math.log((a+1e-3)/(b+1e-3)))/s);
+  function similarity(f,g){
+    if(!f.found||!g.found)return 0;
+    let o=0;for(let i=0;i<8;i++)o+=Math.abs(f.ori[i]-g.ori[i]);o/=2;
+    const dist=0.38*lg(f.elong,g.elong,1.3)+0.12*Math.min(1,Math.abs(f.fill-g.fill)/0.45)+0.1*Math.min(1,Math.abs(f.rect-g.rect)/0.3)
+      +0.2*lg(f.ring,g.ring,0.9)+0.08*lg(f.area,g.area,2.5)+0.12*o;
+    return 1-dist;
+  }
+  return {features,similarity};
+})();
+</script>
+<script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const today = () => new Date().toISOString().slice(0,10);
@@ -425,6 +486,10 @@ function exRiser(){
   const s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#d8d6cf"/><rect x="120" y="20" width="160" height="250" fill="#7d8a86" stroke="#4d5754" stroke-width="4"/><rect x="250" y="130" width="12" height="40" rx="3" fill="#222"/><rect x="150" y="50" width="100" height="26" fill="#fff"/><text x="200" y="68" font-family="Arial" font-weight="bold" font-size="13" text-anchor="middle" fill="#c00">ELECTRICAL</text><rect x="0" y="270" width="400" height="30" fill="rgba(0,0,0,.6)"/><text x="200" y="290" font-family="Arial" font-size="13" text-anchor="middle" fill="#fff">EXAMPLE PHOTO · RISER DOOR</text></svg>`;
   return "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s);
 }
+function exDriver(){
+  const s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#8d9590"/><rect x="40" y="90" width="320" height="110" rx="6" fill="#e9ebe8" stroke="#555" stroke-width="3"/><rect x="60" y="105" width="190" height="80" fill="#fff" stroke="#999"/><text x="70" y="128" font-family="Arial" font-weight="bold" font-size="15" fill="#111">LED DRIVER</text><text x="70" y="150" font-family="Arial" font-size="12" fill="#111">36W  900mA  CC</text><text x="70" y="168" font-family="Arial" font-size="12" fill="#111">220-240V~ 50/60Hz</text><circle cx="300" cy="125" r="9" fill="#444"/><circle cx="300" cy="165" r="9" fill="#444"/><rect x="0" y="270" width="400" height="30" fill="rgba(0,0,0,.6)"/><text x="200" y="290" font-family="Arial" font-size="13" text-anchor="middle" fill="#fff">EXAMPLE PHOTO · DRIVER LABEL</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s);
+}
 function exLight(kind){
   let s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#e9e8e3"/>`;
   for(let x=0;x<=400;x+=100) s+=`<line x1="${x}" y1="0" x2="${x}" y2="300" stroke="#b9b8b2" stroke-width="3"/>`;
@@ -441,17 +506,22 @@ async function loadData(){ try{ const db=await idb(); return await new Promise(r
 async function save(){
   try{ const db=await idb(); db.transaction("kv","readwrite").objectStore("kv").put(DB,"data"); }catch{}
   $("#count").textContent=`${DB.lights.length} lights · ${DB.boards.length} boards`;
+  featCache.size>300&&featCache.clear();
 }
 function seed(){
   return { v:3, example:true, lastPrinted:1080,
+    types:[
+      {id:"tp1",name:"600x600 LED panel",driverModel:"36W 900mA constant current",driverLocation:"Above the ceiling tile beside the panel",notes:"Example type.",photos:[exLight("panel")],driverPhotos:[exDriver()]},
+      {id:"tp2",name:"90mm LED downlight",driverModel:"10W 300mA constant current",driverLocation:"Lying on the ceiling tile next to the downlight",notes:"Example type.",photos:[exLight("down")],driverPhotos:[]}
+    ],
     boards:[
       {code:"1001",name:"DB-L3-A",location:"Level 3, east riser cupboard (key 92)",fedFrom:"MSB Ground, CB 12",notes:"Lighting chassis on the left. Door sticks, lift and pull.",photos:[exRiser(),exBoard("DB-L3-A",0)]},
       {code:"1002",name:"DB-L3-B",location:"Level 3, west riser beside fire stairs",fedFrom:"MSB Ground, CB 13",notes:"",photos:[exBoard("DB-L3-B",0)]}
     ],
     lights:[
-      {code:"1003",board:"1001",cb:"14",phase:"L1",location:"L3 corridor outside lift lobby",fitting:"600x600 LED panel",notes:"",cbPhotos:[exBoard("DB-L3-A",14)],lightPhotos:[exLight("panel")],history:[{d:"2026-10-28",t:"Replaced driver."}]},
-      {code:"1004",board:"1001",cb:"14",phase:"L1",location:"L3 corridor near kitchenette",fitting:"600x600 LED panel",notes:"Same circuit as 1003.",cbPhotos:[exBoard("DB-L3-A",14)],lightPhotos:[exLight("panel")],history:[{d:"2026-11-02",t:"Tagged, no fault."}]},
-      {code:"1005",board:"1002",cb:"7",phase:"L3",location:"Meeting room 3.12, downlight by window",fitting:"90mm LED downlight",notes:"On motion sensor in ceiling.",cbPhotos:[exBoard("DB-L3-B",7)],lightPhotos:[exLight("down")],history:[{d:"2026-11-04",t:"Downlight swapped."}]}
+      {code:"1003",type:"tp1",board:"1001",cb:"14",phase:"L1",location:"L3 corridor outside lift lobby",fitting:"600x600 LED panel",notes:"",driverLocation:"This one is above the tile toward the lifts.",cbPhotos:[exBoard("DB-L3-A",14)],lightPhotos:[exLight("panel")],history:[{d:"2026-10-28",t:"Replaced driver."}]},
+      {code:"1004",type:"tp1",board:"1001",cb:"14",phase:"L1",location:"L3 corridor near kitchenette",fitting:"600x600 LED panel",notes:"Same circuit as 1003.",cbPhotos:[exBoard("DB-L3-A",14)],lightPhotos:[exLight("panel")],history:[{d:"2026-11-02",t:"Tagged, no fault."}]},
+      {code:"1005",type:"tp2",board:"1002",cb:"7",phase:"L3",location:"Meeting room 3.12, downlight by window",fitting:"90mm LED downlight",notes:"On motion sensor in ceiling.",cbPhotos:[exBoard("DB-L3-B",7)],lightPhotos:[exLight("down")],history:[{d:"2026-11-04",t:"Downlight swapped."}]}
     ]};
 }
 /* older saved data (boards without tag numbers) is converted once */
@@ -464,8 +534,10 @@ function migrate(d){
   out.lastPrinted=Math.max(out.lastPrinted,next-1);
   return out;
 }
+function tidy(d){ d.types=d.types||[]; d.types.forEach(t=>{ t.photos=t.photos||[]; t.driverPhotos=t.driverPhotos||[]; }); (d.lights||[]).forEach(l=>{ l.type=l.type||""; l.driverPhotos=l.driverPhotos||[]; l.driverModel=l.driverModel||""; l.driverLocation=l.driverLocation||""; l.lightPhotos=l.lightPhotos||[]; l.cbPhotos=l.cbPhotos||[]; l.history=l.history||[]; }); return d; }
 const board = c => DB.boards.find(b=>b.code===c);
 const light = c => DB.lights.find(l=>l.code===c);
+const ftype = id => DB.types.find(t=>t.id===id);
 
 /* ---------- helpers ---------- */
 let toastT;
@@ -518,6 +590,21 @@ function go(name,arg){ view={name,arg}; render(); window.scrollTo(0,0); }
 const back = (to="home",arg) => `<button class="back" data-go="${to}"${arg?` data-arg="${esc(arg)}"`:""}>← Back</button>`;
 const lightName = l => l.location || `Light ${l.code}`;
 function lightItem(l){ const b=board(l.board); return `<button class="item" data-open="${l.code}"><span class="code">${l.code}</span><span class="t"><b>${esc(lightName(l))}</b><span>${b?`${esc(b.name)}${l.cb?` · CB ${esc(l.cb)}`:""}`:"Not linked to a board yet"}</span></span><span class="cb">${l.history.at(-1)?fmtDate(l.history.at(-1).d):""}</span></button>`; }
+function typeItem(T){ const th=T.photos[0]; const n=DB.lights.filter(l=>l.type===T.id).length; return `<button class="item" data-type="${T.id}">${th?`<img class="thumb" src="${th}" alt="">`:`<span class="thumb"></span>`}<span class="t"><b>${esc(T.name)}</b><span>${esc(T.driverModel||"Driver not recorded")}</span></span><span class="cb">${n} light${n===1?"":"s"}</span></button>`; }
+const featCache=new Map();
+async function featOf(src){ if(featCache.has(src)) return featCache.get(src); const img=new Image(); img.src=src; try{ await img.decode(); }catch{ return null; } const f=Match.features(img); featCache.set(src,f); return f; }
+let idState=null;
+async function identifyPhoto(file){
+  toast("Checking your fitting types…");
+  const photo=await resizeImage(file,900), f=await featOf(photo), ranked=[];
+  for(const T of DB.types){
+    const refs=[...T.photos,...DB.lights.filter(l=>l.type===T.id).flatMap(l=>l.lightPhotos)];
+    let best=0; for(const r of refs){ const g=await featOf(r); if(f&&g) best=Math.max(best,Match.similarity(f,g)); }
+    ranked.push({id:T.id,score:refs.length?best:0});
+  }
+  ranked.sort((a,b)=>b.score-a.score);
+  idState={photo,ranked}; $("#toast").hidden=true; go("identify");
+}
 function boardItem(b){ return `<button class="item" data-open="${b.code}"><span class="code">${b.code}</span><span class="t"><b>${esc(b.name)}</b><span>${esc(b.location)}</span></span><span class="cb">${DB.lights.filter(l=>l.board===b.code).length} lights</span></button>`; }
 
 const V={
@@ -532,6 +619,11 @@ home(){
     <form class="lookup" id="lookup-form"><input id="lookup" type="search" autocomplete="off" placeholder="1001 or search" aria-label="Tag number or search"><button>Find</button></form>
     <div class="list" id="results" hidden></div>
   </section>
+  <section class="panel">
+    <h2>Which driver does it need?</h2>
+    <p class="muted">Take a photo of a light. The app compares it with your fitting types and shows the driver.</p>
+    <button id="identify">Identify a fitting from a photo</button>
+  </section>
   ${DB.example?`<section class="panel"><p class="note">This has example data in it. Try <b>1001</b> (a board), <b>1003</b> (a light on it) or <b>1006</b> (a blank tag). Clear it when you start for real.</p><button class="danger" id="clear-ex">Clear example data</button></section>`:""}
   ${unlinked.length?`<section class="panel"><h3>Waiting for a board</h3><p class="note">These lights are tagged but not linked yet. Open one and scan its board's tag.</p><div class="list">${unlinked.map(lightItem).join("")}</div></section>`:""}
   <section class="panel"><h3>Recently worked on</h3>
@@ -539,6 +631,9 @@ home(){
   </section>
   <section class="panel"><div class="row" style="align-items:center"><h3 style="flex:1 1 auto">Boards</h3><button class="primary" data-go="editBoard" data-arg="" style="flex:0 0 auto">+ Create a board</button></div>
     <div class="list">${DB.boards.map(boardItem).join("")||`<div class="empty">No boards yet. Create one, or scan a blank tag on a board.</div>`}</div>
+  </section>
+  <section class="panel"><div class="row" style="align-items:center"><h3 style="flex:1 1 auto">Fitting types</h3><button data-go="editType" data-arg="" style="flex:0 0 auto">+ Add a type</button></div>
+    <div class="list">${DB.types.map(typeItem).join("")||`<div class="empty">No fitting types yet. Add the types used in the building, each with its driver and a few photos.</div>`}</div>
   </section>
   <section class="panel"><div class="row"><button data-go="make">Make QR tags</button><button data-go="data">Backup &amp; restore</button></div></section>`;
 },
@@ -552,7 +647,7 @@ blank(code){
   </div>`;
 },
 linkLight(code){
-  draft={code,board:"",cb:"",phase:"",location:"",fitting:"",notes:"",cbPhotos:[],lightPhotos:[],history:[]};
+  draft={code,board:"",cb:"",phase:"",location:"",fitting:"",notes:"",cbPhotos:[],lightPhotos:[],driverPhotos:[],driverModel:"",driverLocation:"",history:[]};
   return `${back("blank",code)}
   <section class="panel">
     <div class="row" style="align-items:center"><h2 style="flex:1 1 auto">Link light to its board</h2><span class="code lg" style="flex:0 0 auto">${esc(code)}</span></div>
@@ -564,11 +659,12 @@ linkLight(code){
   <section class="panel"><p class="note">Can't get to the board right now? Save the light and link it later. It goes on the "Waiting for a board" list.</p><button id="save-unlinked">Save, link later</button></section>`;
 },
 light(code){
-  const l=light(code), b=board(l.board);
+  const l=light(code), b=board(l.board), T=ftype(l.type);
+  draft={...l,lightPhotos:[...l.lightPhotos],driverPhotos:[...l.driverPhotos]};
   return `${back()}
   <div class="row"><button data-go="editLight" data-arg="${l.code}">${l.location||l.cb||l.lightPhotos.length?"Edit":"Add details"}</button><button data-go="qr" data-arg="${l.code}">Show QR</button><button class="danger" id="del">Delete</button></div>
   <section class="panel">
-    <div class="row" style="align-items:center"><span class="code lg" style="flex:0 0 auto">${l.code}</span><span class="muted" style="flex:1 1 auto">${esc(l.fitting)}</span></div>
+    <div class="row" style="align-items:center"><span class="code lg" style="flex:0 0 auto">${l.code}</span><span class="muted" style="flex:1 1 auto">${esc(ftype(l.type)?.name||l.fitting)}</span></div>
     <h1>${esc(lightName(l))}</h1>
     ${b?`<div class="supply">
       <div${l.cb?"":` class="wide"`}><div class="k">Board</div><div class="v">${esc(b.name)}</div></div>
@@ -577,9 +673,16 @@ light(code){
       ${b.notes?`<div class="wide"><div class="k">Access notes</div><div class="v small">${esc(b.notes)}</div></div>`:""}
     </div>`:`<div class="newtag"><span>Not linked to a board yet. Go to the board and scan its tag.</span></div><button class="primary" id="link-scan">Scan the board's tag</button>`}
   </section>
+  <section class="panel"><h3>The light</h3><div id="ph-lightPhotos">${photos(draft.lightPhotos,"lightPhotos",{edit:true,one:true})}</div>${addPhoto("lightPhotos","+ Photo of the light")}${l.notes?`<p>${esc(l.notes)}</p>`:""}</section>
+  <section class="panel"><h3>Driver</h3>
+    ${T?`<div class="supply"><div class="wide"><div class="k">Fitting type</div><div class="v small">${esc(T.name)}</div></div>${T.driverModel?`<div class="wide"><div class="k">Driver it needs</div><div class="v">${esc(T.driverModel)}</div></div>`:""}${T.driverLocation?`<div class="wide"><div class="k">Usually found</div><div class="v small">${esc(T.driverLocation)}</div></div>`:""}</div>
+      ${T.driverPhotos.length?photos(T.driverPhotos,""):""}<button data-type="${T.id}">Open fitting type →</button>`
+     :`<p class="note">Set this light's fitting type and it shows the driver that type needs.</p><button data-go="editLight" data-arg="${l.code}">Set fitting type</button>`}
+    ${l.driverModel||l.driverLocation?`<div class="supply">${l.driverModel?`<div class="wide"><div class="k">This light's driver</div><div class="v small">${esc(l.driverModel)}</div></div>`:""}${l.driverLocation?`<div class="wide"><div class="k">This light's driver is at</div><div class="v small">${esc(l.driverLocation)}</div></div>`:""}</div>`:""}
+    ${draft.driverPhotos.length?`<div id="ph-driverPhotos">${photos(draft.driverPhotos,"driverPhotos",{edit:true})}</div>`:`<div id="ph-driverPhotos"></div>`}${addPhoto("driverPhotos","+ Photo of this light's driver")}
+  </section>
   ${b?`${l.cbPhotos.length?`<section class="panel"><h3>Breaker</h3>${photos(l.cbPhotos,"",{one:true})}</section>`:""}
   <section class="panel"><h3>Board ${esc(b.name)}</h3>${photos(b.photos,"")}<button data-open="${b.code}">Open board ${esc(b.code)} →</button></section>`:""}
-  ${l.lightPhotos.length||l.notes?`<section class="panel"><h3>The light</h3>${photos(l.lightPhotos,"",{one:true})}${l.notes?`<p>${esc(l.notes)}</p>`:""}</section>`:""}
   <section class="panel"><h3>Job history</h3>
     <div class="hist">${l.history.slice().reverse().map(h=>`<div><time>${fmtDate(h.d)}</time><span>${esc(h.t)}</span></div>`).join("")||`<p class="muted">Nothing logged yet.</p>`}</div>
     <form class="lookup" id="log-form"><input id="log-text" style="font:400 16px var(--body);letter-spacing:0" placeholder="e.g. Replaced lamp" aria-label="Log a job"><button>Log</button></form>
@@ -601,6 +704,57 @@ board(code){
   </section>
   <section class="panel"><h3>Photos</h3><div id="ph-photos">${photos(draft.photos,"photos",{edit:true})}</div>${addPhoto("photos","+ Add photos")}</section>
   <section class="panel"><h3>Lights on this board, by breaker</h3><div class="list">${ls.map(lightItem).join("")||`<div class="empty">No lights linked yet. Tag a light, then scan this board's tag.</div>`}</div></section>`;
+},
+type(id){
+  const T=ftype(id), ls=DB.lights.filter(l=>l.type===id), learned=ls.reduce((a,l)=>a+l.lightPhotos.length,0);
+  draft={...T,photos:[...T.photos],driverPhotos:[...T.driverPhotos]};
+  return `${back()}
+  <div class="row"><button data-go="editType" data-arg="${T.id}">Edit</button><button class="danger" id="del-type">Delete</button></div>
+  <section class="panel">
+    <span class="badge" style="align-self:flex-start">Fitting type</span>
+    <h1>${esc(T.name)}</h1>
+    <div class="supply">
+      <div class="wide"><div class="k">Driver it needs</div><div class="v">${esc(T.driverModel||"Not recorded")}</div></div>
+      ${T.driverLocation?`<div class="wide"><div class="k">Usually found</div><div class="v small">${esc(T.driverLocation)}</div></div>`:""}
+      ${T.notes?`<div class="wide"><div class="k">Notes</div><div class="v small">${esc(T.notes)}</div></div>`:""}
+    </div>
+  </section>
+  <section class="panel"><h3>Driver photos</h3><div id="ph-driverPhotos">${photos(draft.driverPhotos,"driverPhotos",{edit:true})}</div>${addPhoto("driverPhotos","+ Photo of the driver")}</section>
+  <section class="panel"><h3>Photos of this fitting</h3>
+    <p class="note">Identify compares against these${learned?`, plus ${learned} photo${learned>1?"s":""} of lights set to this type`:""}. Several angles help.</p>
+    <div id="ph-photos">${photos(draft.photos,"photos",{edit:true})}</div>${addPhoto("photos","+ Add photos of this fitting")}</section>
+  <section class="panel"><h3>Lights of this type</h3><div class="list">${ls.map(lightItem).join("")||`<div class="empty">No lights set to this type yet.</div>`}</div></section>`;
+},
+editType(id){
+  const ex=id&&id!=="from-photo"&&ftype(id);
+  const T=ex||{id:"tp"+Date.now().toString(36),name:"",driverModel:"",driverLocation:"",notes:"",photos:id==="from-photo"&&idState?[idState.photo]:[],driverPhotos:[]};
+  draft={...T,photos:[...T.photos],driverPhotos:[...T.driverPhotos]};
+  return `${back(ex?"type":"home",ex?id:undefined)}
+  <form class="panel" id="type-form">
+    <h2>${ex?"Edit fitting type":"New fitting type"}</h2>
+    <label class="f">Name<input id="t-name" value="${esc(T.name)}" placeholder="e.g. 1200mm IP65 LED batten" required></label>
+    <label class="f">Driver it needs<input id="t-drv" value="${esc(T.driverModel)}" placeholder="e.g. 40W 1050mA constant current"></label>
+    <label class="f">Where the driver usually is<input id="t-drvloc" value="${esc(T.driverLocation)}" placeholder="e.g. Inside the fitting, right-hand end"></label>
+    <label class="f">Notes<textarea id="t-notes" placeholder="Supplier, part number, how to open it">${esc(T.notes)}</textarea></label>
+    <h3>Photos of the fitting</h3>
+    <div id="ph-photos">${photos(draft.photos,"photos",{edit:true})}</div>${addPhoto("photos","+ Add photos of this fitting")}
+    <h3>Driver photos</h3>
+    <div id="ph-driverPhotos">${photos(draft.driverPhotos,"driverPhotos",{edit:true})}</div>${addPhoto("driverPhotos","+ Photo of the driver")}
+    <button class="primary">Save fitting type</button>
+  </form>`;
+},
+identify(){
+  if(!idState) return V.home();
+  const r=idState.ranked;
+  return `${back()}
+  <section class="panel">
+    <h2>Which fitting is it?</h2>
+    <div class="idphoto"><img src="${idState.photo}" alt="Your photo" data-view></div>
+    ${r.length?`<p class="note">Best match first. Tap the right one to see its driver. That also saves your photo to it, so it matches better next time.</p>`:`<p class="note">No fitting types yet, so there's nothing to compare with. Save this photo as a new type.</p>`}
+  </section>
+  ${r.length?`<section class="panel"><div class="list">${r.map((x,i)=>{const T=ftype(x.id),th=T.photos[0]||DB.lights.find(l=>l.type===T.id&&l.lightPhotos.length)?.lightPhotos[0];
+    return `<button class="item" data-pick="${T.id}">${th?`<img class="thumb" src="${th}" alt="">`:`<span class="thumb"></span>`}<span class="t"><b>${esc(T.name)}</b><span>${esc(T.driverModel||"Driver not recorded")}</span></span>${i===0&&x.score>0.55?`<span class="best">Best match</span>`:""}</button>`;}).join("")}</div></section>`:""}
+  <section class="panel"><button data-go="editType" data-arg="from-photo">${r.length?"None of these, add a new type":"Save as a new fitting type"}</button></section>`;
 },
 editBoard(code){
   const ex=code&&board(code);
@@ -624,8 +778,8 @@ editBoard(code){
 },
 editLight(code){
   const ex=light(code);
-  const l=ex||{code,board:"",cb:"",phase:"",location:"",fitting:"",notes:"",cbPhotos:[],lightPhotos:[],history:[]};
-  draft={...l,cbPhotos:[...l.cbPhotos],lightPhotos:[...l.lightPhotos]};
+  const l=ex||{code,board:"",cb:"",phase:"",location:"",fitting:"",notes:"",cbPhotos:[],lightPhotos:[],driverPhotos:[],driverModel:"",driverLocation:"",history:[]};
+  draft={...l,cbPhotos:[...l.cbPhotos],lightPhotos:[...l.lightPhotos],driverPhotos:[...l.driverPhotos]};
   return `${back(ex?"light":"blank",code)}
   <form id="light-form" class="wrap" style="width:100%">
     <section class="panel">
@@ -635,9 +789,14 @@ editLight(code){
     <section class="panel">
       <div class="step"><i>2</i><h2>Details <span class="badge">optional</span></h2></div>
       <label class="f">Where is it?<input id="f-loc" value="${esc(l.location)}" placeholder="Optional, e.g. L4 toilets, 2nd downlight"></label>
-      <label class="f">Fitting type<input id="f-fit" value="${esc(l.fitting)}" placeholder="e.g. 1200mm LED batten"></label>
+      <label class="f">Fitting type<select id="f-type"><option value="">Not set</option>${DB.types.map(t=>`<option value="${t.id}" ${t.id===l.type?"selected":""}>${esc(t.name)}</option>`).join("")}</select></label>
+      ${DB.types.length?"":`<p class="note">No fitting types yet. Add them from the home screen.</p>`}
       <div id="ph-lightPhotos">${photos(draft.lightPhotos,"lightPhotos",{edit:true})}</div>
       ${addPhoto("lightPhotos","+ Photo of the light")}
+      <label class="f">This light's driver, if different from its type<input id="f-drv" value="${esc(l.driverModel)}" placeholder="Optional"></label>
+      <label class="f">Where is this light's driver?<input id="f-drvloc" value="${esc(l.driverLocation)}" placeholder="e.g. Inside the fitting, or above the tile 1m east"></label>
+      <div id="ph-driverPhotos">${photos(draft.driverPhotos,"driverPhotos",{edit:true})}</div>
+      ${addPhoto("driverPhotos","+ Photo of the driver or where it is")}
       <div class="row"><label class="f">CB number<input id="f-cb" inputmode="numeric" value="${esc(l.cb)}" placeholder="Optional"></label>
         <label class="f">Phase<select id="f-phase">${["","L1","L2","L3"].map(p=>`<option ${p===l.phase?"selected":""}>${p}</option>`).join("")}</select></label></div>
       <div id="ph-cbPhotos">${photos(draft.cbPhotos,"cbPhotos",{edit:true})}</div>
@@ -675,7 +834,7 @@ make(){
   <section class="panel" id="print-area"></section>`;
 },
 data(){
-  const n=DB.lights.reduce((a,t)=>a+t.cbPhotos.length+t.lightPhotos.length,0)+DB.boards.reduce((a,b)=>a+b.photos.length,0);
+  const n=DB.lights.reduce((a,t)=>a+t.cbPhotos.length+t.lightPhotos.length+t.driverPhotos.length,0)+DB.boards.reduce((a,b)=>a+b.photos.length,0);
   return `${back()}
   <section class="panel"><h2>Backup &amp; restore</h2>
   <p class="muted">Everything is stored on this phone only. Save a backup now and then, and use it to move the records to another phone.</p>
@@ -713,7 +872,7 @@ function search(q){
     const b=board(t.board)||{};
     if(cbm) return t.cb===cbm[1];
     if(/^\d+$/.test(q)) return t.code.startsWith(q);
-    const hay=[t.code,t.location,t.fitting,t.notes,b.name,b.location,"cb "+t.cb,"cb"+t.cb].join(" ").toLowerCase();
+    const hay=[t.code,t.location,t.fitting,ftype(t.type)?.name,ftype(t.type)?.driverModel,t.notes,t.driverModel,t.driverLocation,b.name,b.location,"cb "+t.cb,"cb"+t.cb].join(" ").toLowerCase();
     return words.every(w=>hay.includes(w));
   }).map(lightItem);
   const bs=cbm?[]:DB.boards.filter(b=>/^\d+$/.test(q)?b.code.startsWith(q):words.every(w=>[b.code,b.name,b.location,b.fedFrom,b.notes].join(" ").toLowerCase().includes(w))).map(boardItem);
@@ -809,15 +968,22 @@ async function sharePDF(){
 
 /* ---------- events ---------- */
 document.addEventListener("click",async e=>{
-  const t=e.target.closest("[data-go],[data-open],[data-view],[data-del],button[id]");
+  const t=e.target.closest("[data-go],[data-open],[data-view],[data-del],[data-type],[data-pick],button[id]");
   if(!t) return;
   if(t.dataset.go) return go(t.dataset.go,t.dataset.arg);
+  if(t.dataset.type) return go("type",t.dataset.type);
+  if(t.dataset.pick){ const T=ftype(t.dataset.pick); if(idState&&!T.photos.includes(idState.photo)){ T.photos.push(idState.photo); if(T.photos.length>15) T.photos.splice(1,1); await save(); } toast(`Saved your photo to ${T.name}`); idState=null; return go("type",T.id); }
   if(t.dataset.open) return open(t.dataset.open);
   if(t.dataset.view!==undefined){ $("#viewer-img").src=t.src; $("#viewer").hidden=false; return; }
-  if(t.dataset.del){ const [k,i]=t.dataset.del.split(":"); draft[k].splice(+i,1); refreshPhotos(k); if(view.name==="board"){ board(view.arg).photos=draft.photos; await save(); } return; }
+  if(t.dataset.del){ if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Remove"; return; } const [k,i]=t.dataset.del.split(":"); draft[k].splice(+i,1); refreshPhotos(k); if(view.name==="board"){ board(view.arg).photos=draft.photos; await save(); } if(view.name==="light"){ light(view.arg)[k]=draft[k]; await save(); } if(view.name==="type"){ ftype(view.arg)[k]=draft[k]; await save(); } return; }
   switch(t.id){
     case "home-btn": return go("home");
     case "scan": return scan();
+    case "identify": return $("#id-input").click();
+    case "del-type": {
+      if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Tap again to delete"; return; }
+      DB.lights.forEach(l=>{ if(l.type===view.arg) l.type=""; }); DB.types=DB.types.filter(x=>x.id!==view.arg); await save(); toast("Fitting type deleted"); return go("home");
+    }
     case "scan-cancel": return stopScan();
     case "scan-photo": { const c=scanCallback; stopScan(); return photoScan(c); }
     case "link-scan": return scan(linkBoard);
@@ -830,7 +996,7 @@ document.addEventListener("click",async e=>{
     case "share-pdf": return sharePDF();
     case "clear-ex":
       if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Tap again to clear"; return; }
-      DB={v:3,boards:[],lights:[],lastPrinted:DB.lastPrinted}; await save(); toast("Example data cleared"); return go("home");
+      DB={v:3,boards:[],lights:[],types:[],lastPrinted:DB.lastPrinted}; await save(); toast("Example data cleared"); return go("home");
     case "del": {
       if(view.name==="board"){ const n=DB.lights.filter(l=>l.board===view.arg).length; if(n){ toast(`${n} light${n>1?"s are":" is"} linked to this board. Link ${n>1?"them":"it"} to another board or delete ${n>1?"them":"it"} first.`); return; } }
       if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Tap again to delete"; return; }
@@ -859,8 +1025,13 @@ document.addEventListener("submit",async e=>{
     const i=DB.boards.findIndex(b=>b.code===rec.code); if(i<0) DB.boards.push(rec); else DB.boards[i]=rec;
     await save(); toast(i<0?`Board ${rec.code} saved`:"Saved"); return go("board",rec.code);
   }
+  if(f.id==="type-form"){
+    const rec={...draft,name:$("#t-name").value.trim(),driverModel:$("#t-drv").value.trim(),driverLocation:$("#t-drvloc").value.trim(),notes:$("#t-notes").value.trim()};
+    const i=DB.types.findIndex(x=>x.id===rec.id); if(i<0) DB.types.push(rec); else DB.types[i]=rec;
+    idState=null; await save(); toast("Fitting type saved"); return go("type",rec.id);
+  }
   if(f.id==="light-form"){
-    const rec={...draft,cb:$("#f-cb").value.trim(),phase:$("#f-phase").value,location:$("#f-loc").value.trim(),fitting:$("#f-fit").value.trim(),notes:$("#f-notes").value.trim()};
+    const rec={...draft,cb:$("#f-cb").value.trim(),phase:$("#f-phase").value,location:$("#f-loc").value.trim(),type:$("#f-type").value,fitting:ftype($("#f-type").value)?.name||"",notes:$("#f-notes").value.trim(),driverModel:$("#f-drv").value.trim(),driverLocation:$("#f-drvloc").value.trim()};
     const i=DB.lights.findIndex(l=>l.code===rec.code);
     if(i<0){ rec.history=[{d:today(),t:$("#f-job").value.trim()||"Tagged."}]; DB.lights.push(rec); } else DB.lights[i]=rec;
     await save(); toast("Saved"); return go("light",rec.code);
@@ -876,7 +1047,10 @@ document.addEventListener("change",async e=>{
     for(const file of t.files){ try{ draft[k].push(await resizeImage(file)); }catch{ toast("Couldn't read that photo."); } }
     refreshPhotos(k); t.value="";
     if(view.name==="board"){ board(view.arg).photos=draft.photos; await save(); }
+    if(view.name==="light"){ light(view.arg)[k]=draft[k]; await save(); toast("Photo saved"); }
+    if(view.name==="type"){ ftype(view.arg)[k]=draft[k]; await save(); toast("Photo saved"); }
   }
+  if(t.id==="id-input" && t.files[0]){ const file=t.files[0]; t.value=""; try{ await identifyPhoto(file); }catch{ toast("Couldn't read that photo."); } return; }
   if(t.id==="scan-input" && t.files[0]){
     const cb=scanCallback; scanCallback=null;
     try{
@@ -891,13 +1065,13 @@ document.addEventListener("change",async e=>{
     t.value="";
   }
   if(t.id==="import" && t.files[0]){
-    try{ const j=migrate(JSON.parse(await t.files[0].text())); if(!Array.isArray(j.lights)||!Array.isArray(j.boards)) throw 0; DB=j; await save(); toast("Backup restored"); go("home"); }
+    try{ const j=tidy(migrate(JSON.parse(await t.files[0].text()))); if(!Array.isArray(j.lights)||!Array.isArray(j.boards)) throw 0; DB=j; await save(); toast("Backup restored"); go("home"); }
     catch{ toast("That file isn't a Light Tracer backup."); }
   }
 });
 
 (async()=>{
-  DB=migrate(await loadData())||seed(); await save(); render();
+  DB=tidy(migrate(await loadData())||seed()); await save(); render();
   try{ navigator.storage?.persist?.(); }catch{}
   try{ if("serviceWorker" in navigator && location.protocol==="https:" && !/claude/.test(location.hostname)) navigator.serviceWorker.register("sw.js"); }catch{}
 })();
