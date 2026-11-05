@@ -1,0 +1,587 @@
+<title>Light Tracer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Light Tracer">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f6b4f">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+/* Layout: one narrow phone column. Tag numbers look like engraved traffolyte labels. */
+:root{
+  --bg:#eef1ee; --surface:#ffffff; --ink:#15201b; --muted:#5a6862; --line:#d3dad5;
+  --label:#f1b81f; --label-ink:#111; --accent:#0f6b4f; --on-accent:#ffffff; --danger:#b3261e;
+  --display:"Barlow Condensed","Arial Narrow","Helvetica Neue",system-ui,sans-serif;
+  --body:"Barlow",-apple-system,system-ui,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101614; --surface:#18201d; --ink:#e6ece8; --muted:#94a39c; --line:#2b3632;
+  --label:#f3bd30; --label-ink:#111; --accent:#4fc59a; --on-accent:#08130f; --danger:#f2867d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101614; --surface:#18201d; --ink:#e6ece8; --muted:#94a39c; --line:#2b3632;
+  --label:#f3bd30; --label-ink:#111; --accent:#4fc59a; --on-accent:#08130f; --danger:#f2867d; color-scheme:dark}
+[hidden]{display:none!important}
+html,body{background:var(--bg);color:var(--ink);margin:0}
+body{font-family:var(--body);font-size:16px;line-height:1.45;-webkit-text-size-adjust:100%;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:calc(12px + env(safe-area-inset-top,0px)) calc(48px + env(safe-area-inset-bottom,0px))}
+.wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header.top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{font-family:var(--display);font-size:24px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;display:flex;align-items:center;gap:8px;cursor:pointer;background:none;border:0;color:var(--ink);padding:0;white-space:nowrap}
+.brand svg{width:22px;height:22px}
+h1,h2,h3{font-family:var(--display);font-weight:700;margin:0;text-wrap:balance;line-height:1.1}
+h1{font-size:30px} h2{font-size:22px}
+h3{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-family:var(--body);font-weight:600}
+p{margin:0}
+.muted{color:var(--muted)} .note{font-size:14px;color:var(--muted)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.code{font-family:var(--mono);font-weight:700;background:var(--label);color:var(--label-ink);padding:2px 8px;border-radius:3px;letter-spacing:.06em;box-shadow:inset 0 0 0 1px rgba(0,0,0,.25);white-space:nowrap;display:inline-block;font-variant-numeric:tabular-nums}
+.code.lg{font-size:22px;padding:4px 12px}
+.lookup{display:flex;gap:8px}
+.lookup input{flex:1;min-width:0;font-family:var(--mono);font-size:26px;font-weight:700;letter-spacing:.12em;padding:12px 14px;border:2px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+.lookup input:focus{outline:none;border-color:var(--accent)}
+button,.btn{font:600 16px var(--body);border-radius:8px;padding:12px 16px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;text-align:center}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+button.danger{color:var(--danger)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.btn:focus-within{outline:3px solid var(--label);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{flex:1 1 140px}
+.supply{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.supply>div{background:var(--surface);padding:10px 12px;min-width:0}
+.supply .k{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.supply .v{font-family:var(--display);font-size:28px;font-weight:700;overflow-wrap:anywhere;line-height:1.15}
+.supply .v.small{font-family:var(--body);font-size:16px;font-weight:500}
+.supply .wide{grid-column:1/-1}
+.list{display:flex;flex-direction:column}
+.item{display:flex;gap:12px;align-items:center;padding:12px 0;border:0;border-top:1px solid var(--line);border-radius:0;cursor:pointer;background:none;text-align:left;justify-content:flex-start;font-weight:400;color:var(--ink);width:100%}
+.item:first-child{border-top:0}
+.item .t{flex:1;min-width:0}
+.item .t b{display:block;font-weight:600}
+.item .t span{color:var(--muted);font-size:14px}
+.cb{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:14px;color:var(--muted);white-space:nowrap}
+.photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.photos.one{grid-template-columns:1fr}
+.photos img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:6px;border:1px solid var(--line);cursor:zoom-in;display:block;background:var(--bg)}
+.photos .ph{position:relative}
+.photos .ph button{position:absolute;top:4px;right:4px;padding:2px 9px;font-size:13px}
+.empty{border:2px dashed var(--line);border-radius:8px;padding:14px;text-align:center;color:var(--muted);font-size:14px}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:14px;font-weight:600;color:var(--muted);min-width:0}
+label.f input,label.f select,label.f textarea{font:400 16px var(--body);padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);min-width:0}
+label.f textarea{min-height:64px;resize:vertical}
+.step{display:flex;align-items:center;gap:10px}
+.step i{font-style:normal;font-family:var(--mono);font-weight:700;width:26px;height:26px;border-radius:50%;background:var(--ink);color:var(--surface);display:inline-flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto}
+.sub{border-left:3px solid var(--label);padding-left:12px;display:flex;flex-direction:column;gap:12px}
+.hist{display:flex;flex-direction:column;gap:8px;font-size:15px}
+.hist div{display:flex;gap:10px}
+.hist time{font-family:var(--mono);font-size:13px;color:var(--muted);white-space:nowrap;padding-top:2px}
+.badge{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 8px;white-space:nowrap}
+.newtag{display:flex;gap:12px;align-items:center;background:var(--label);color:var(--label-ink);border-radius:8px;padding:12px}
+.newtag b{font-family:var(--mono);font-size:22px}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-weight:600;max-width:calc(100% - 32px);z-index:30}
+#viewer{position:fixed;inset:0;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;z-index:40;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
+#viewer img{max-height:100%;max-width:100%;object-fit:contain}
+.back{align-self:flex-start;padding:6px 10px;font-size:14px}
+.sheet{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+@media (max-width:480px){.sheet{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tagl{background:#fff;color:#111;border:1px dashed #9aa19d;border-radius:6px;padding:8px 6px;display:flex;flex-direction:column;align-items:center;gap:3px;break-inside:avoid}
+.tagl svg{width:100%;max-width:120px;height:auto;display:block}
+.tagl .n{font-family:var(--mono);font-weight:700;font-size:18px;letter-spacing:.08em}
+.tagl .k{background:#f1b81f;font-size:10px;font-weight:700;padding:1px 8px;letter-spacing:.06em}
+.big .sheet{grid-template-columns:repeat(2,minmax(0,1fr))}
+.big .tagl svg{max-width:200px}
+@media print{body *{visibility:hidden}#print-area,#print-area *{visibility:visible}#print-area{position:absolute;left:0;top:0;width:100%}.sheet{grid-template-columns:repeat(4,1fr)!important}@page{size:A4;margin:10mm}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <button class="brand" id="home-btn" aria-label="Home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/></svg>
+      Light Tracer
+    </button>
+    <span class="badge" id="count"></span>
+  </header>
+  <main id="app" class="wrap" style="padding:0;width:100%"></main>
+</div>
+<div id="toast" hidden></div>
+<div id="viewer" hidden><img id="viewer-img" alt="Photo, full size"></div>
+<input type="file" id="scan-input" accept="image/*" capture="environment" hidden>
+
+<script>
+/* Minimal QR encoder (byte mode, error correction M, versions 1-10). Works offline. */
+const QR=(()=>{
+  const ECC=[0,10,16,26,18,24,16,18,22,22,26], BLK=[0,1,1,1,2,2,4,4,4,5,5];
+  const raw=v=>{let r=(16*v+128)*v+64;if(v>=2){const n=Math.floor(v/7)+2;r-=(25*n-10)*n-55;if(v>=7)r-=36;}return r;};
+  const dataCw=v=>Math.floor(raw(v)/8)-ECC[v]*BLK[v];
+  const mul=(x,y)=>{let z=0;for(let i=7;i>=0;i--){z=(z<<1)^((z>>>7)*0x11d);z^=((y>>>i)&1)*x;}return z;};
+  function divisor(d){const r=new Array(d).fill(0);r[d-1]=1;let root=1;for(let i=0;i<d;i++){for(let j=0;j<d;j++){r[j]=mul(r[j],root);if(j+1<d)r[j]^=r[j+1];}root=mul(root,2);}return r;}
+  function remainder(data,div){const r=div.map(()=>0);for(const b of data){const f=b^r.shift();r.push(0);div.forEach((c,i)=>r[i]^=mul(c,f));}return r;}
+  function encode(text,forceMask){
+    const bytes=Array.from(new TextEncoder().encode(text));
+    let v=1;for(;v<=10;v++){if(4+(v<10?8:16)+8*bytes.length<=dataCw(v)*8)break;}
+    if(v>10)throw new Error("Text too long for QR");
+    const bits=[];const put=(val,n)=>{for(let i=n-1;i>=0;i--)bits.push((val>>>i)&1);};
+    put(4,4);put(bytes.length,v<10?8:16);bytes.forEach(b=>put(b,8));
+    const cap=dataCw(v)*8;put(0,Math.min(4,cap-bits.length));while(bits.length%8)bits.push(0);
+    const data=[];for(let i=0;i<bits.length;i+=8)data.push(parseInt(bits.slice(i,i+8).join(""),2));
+    for(let p=0xec;data.length<dataCw(v);p^=0xec^0x11)data.push(p);
+    // split into blocks, add error correction, interleave
+    const nb=BLK[v],el=ECC[v],rc=Math.floor(raw(v)/8),ns=nb-rc%nb,sl=Math.floor(rc/nb),div=divisor(el),blocks=[];
+    for(let i=0,k=0;i<nb;i++){const d=data.slice(k,k+sl-el+(i<ns?0:1));k+=d.length;const e=remainder(d,div);if(i<ns)d.push(0);blocks.push(d.concat(e));}
+    const cw=[];for(let i=0;i<blocks[0].length;i++)blocks.forEach((b,j)=>{if(i!==sl-el||j>=ns)cw.push(b[i]);});
+    // modules
+    const n=v*4+17,M=[...Array(n)].map(()=>Array(n).fill(false)),F=[...Array(n)].map(()=>Array(n).fill(false));
+    const set=(x,y,d)=>{M[y][x]=d;F[y][x]=true;};
+    for(let i=0;i<n;i++){set(6,i,i%2===0);set(i,6,i%2===0);}
+    const finder=(x,y)=>{for(let dy=-4;dy<=4;dy++)for(let dx=-4;dx<=4;dx++){const d=Math.max(Math.abs(dx),Math.abs(dy)),xx=x+dx,yy=y+dy;if(xx>=0&&xx<n&&yy>=0&&yy<n)set(xx,yy,d!==2&&d!==4);}};
+    finder(3,3);finder(n-4,3);finder(3,n-4);
+    if(v>1){const na=Math.floor(v/7)+2,step=Math.ceil((v*4+4)/(na*2-2))*2,pos=[6];for(let p=n-7;pos.length<na;p-=step)pos.splice(1,0,p);
+      pos.forEach((a,i)=>pos.forEach((b,j)=>{if((i===0&&j===0)||(i===0&&j===na-1)||(i===na-1&&j===0))return;for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++)set(a+dx,b+dy,Math.max(Math.abs(dx),Math.abs(dy))!==1);}));}
+    const format=mask=>{const d=mask;let r=d;for(let i=0;i<10;i++)r=(r<<1)^((r>>>9)*0x537);const b=((d<<10)|r)^0x5412,g=i=>((b>>>i)&1)===1;
+      for(let i=0;i<=5;i++)set(8,i,g(i));set(8,7,g(6));set(8,8,g(7));set(7,8,g(8));for(let i=9;i<15;i++)set(14-i,8,g(i));
+      for(let i=0;i<8;i++)set(n-1-i,8,g(i));for(let i=8;i<15;i++)set(8,n-15+i,g(i));set(8,n-8,true);};
+    format(0);
+    if(v>=7){let r=v;for(let i=0;i<12;i++)r=(r<<1)^((r>>>11)*0x1f25);const b=(v<<12)|r;for(let i=0;i<18;i++){const bit=((b>>>i)&1)===1,a=n-11+i%3,c=Math.floor(i/3);set(a,c,bit);set(c,a,bit);}}
+    let i=0;for(let right=n-1;right>=1;right-=2){if(right===6)right=5;for(let vert=0;vert<n;vert++)for(let j=0;j<2;j++){const x=right-j,up=((right+1)&2)===0,y=up?n-1-vert:vert;if(!F[y][x]&&i<cw.length*8){M[y][x]=((cw[i>>>3]>>>(7-(i&7)))&1)===1;i++;}}}
+    const MASKS=[(x,y)=>(x+y)%2===0,(x,y)=>y%2===0,(x,y)=>x%3===0,(x,y)=>(x+y)%3===0,(x,y)=>(Math.floor(x/3)+Math.floor(y/2))%2===0,(x,y)=>x*y%2+x*y%3===0,(x,y)=>(x*y%2+x*y%3)%2===0,(x,y)=>((x+y)%2+x*y%3)%2===0];
+    const apply=m=>{for(let y=0;y<n;y++)for(let x=0;x<n;x++)if(!F[y][x]&&MASKS[m](x,y))M[y][x]=!M[y][x];};
+    const penalty=()=>{let p=0,dark=0;const line=get=>{let run=1;for(let k=1;k<n;k++){if(get(k)===get(k-1)){run++;if(run===5)p+=3;else if(run>5)p++;}else run=1;}
+        for(let k=0;k+7<=n;k++){if(get(k)&&!get(k+1)&&get(k+2)&&get(k+3)&&get(k+4)&&!get(k+5)&&get(k+6)){const before=k>=4&&[1,2,3,4].every(t=>!get(k-t)),after=k+11<=n&&[7,8,9,10].every(t=>!get(k+t));if(before||after)p+=40;}}};
+      for(let y=0;y<n;y++){line(x=>M[y][x]);line(x=>M[x][y]);}
+      for(let y=0;y<n-1;y++)for(let x=0;x<n-1;x++){const c=M[y][x];if(c===M[y][x+1]&&c===M[y+1][x]&&c===M[y+1][x+1])p+=3;}
+      M.forEach(r=>r.forEach(c=>dark+=c));p+=(Math.ceil(Math.abs(dark*20-n*n*10)/(n*n))-1)*10;return p;};
+    let best=forceMask??0;
+    if(forceMask==null){let low=Infinity;for(let m=0;m<8;m++){apply(m);format(m);const p=penalty();if(p<low){low=p;best=m;}apply(m);}}
+    apply(best);format(best);
+    return {size:n,mask:best,version:v,dark:(x,y)=>M[y][x]};
+  }
+  function svg(text){const q=encode(text),b=4,s=q.size+b*2;let d="";for(let y=0;y<q.size;y++)for(let x=0;x<q.size;x++)if(q.dark(x,y))d+=`M${x+b} ${y+b}h1v1h-1z`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${s} ${s}" shape-rendering="crispEdges"><rect width="${s}" height="${s}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;}
+  return {encode,svg};
+})();
+</script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const today = () => new Date().toISOString().slice(0,10);
+const fmtDate = d => { try { return new Date(d+"T00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"}); } catch { return d; } };
+const uid = () => "b" + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+
+/* ---------- example "photos" (drawn, so the mock-up has something to show) ---------- */
+function exBoard(name, hl){
+  let s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#3a3f3c"/><rect x="40" y="20" width="320" height="260" rx="6" fill="#c9ccc8" stroke="#8b8f8b" stroke-width="3"/><rect x="60" y="34" width="280" height="22" fill="#fff"/><text x="200" y="50" font-family="Arial" font-weight="bold" font-size="14" text-anchor="middle" fill="#111">${name}</text>`;
+  for(let r=0;r<2;r++){ s+=`<rect x="60" y="${80+r*100}" width="280" height="70" fill="#9da19d"/>`;
+    for(let i=0;i<12;i++){ const n=r*12+i+1, x=64+i*23, y=86+r*100, on=n===hl;
+      s+=`<rect x="${x}" y="${y}" width="19" height="58" rx="2" fill="${on?"#f1b81f":"#f4f4f2"}" stroke="#555"/><rect x="${x+6}" y="${y+18}" width="7" height="16" fill="#333"/><text x="${x+9.5}" y="${y+54}" font-family="Arial" font-size="9" text-anchor="middle" fill="#111">${n}</text>`; } }
+  if(hl){ const r=hl>12?1:0, i=(hl-1)%12, x=64+i*23+9.5, y=r?150:50; s+=`<path d="M${x} ${y+(r?100:0)} l-8 ${r?14:-14} h16z" fill="#e5331f" transform="translate(0 ${r?-4:30})"/>`; }
+  s+=`<rect x="0" y="270" width="400" height="30" fill="rgba(0,0,0,.6)"/><text x="200" y="290" font-family="Arial" font-size="13" text-anchor="middle" fill="#fff">EXAMPLE PHOTO${hl?` · CB ${hl}`:""}</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s);
+}
+function exRiser(){
+  const s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#d8d6cf"/><rect x="120" y="20" width="160" height="250" fill="#7d8a86" stroke="#4d5754" stroke-width="4"/><rect x="250" y="130" width="12" height="40" rx="3" fill="#222"/><rect x="150" y="50" width="100" height="26" fill="#fff"/><text x="200" y="68" font-family="Arial" font-weight="bold" font-size="13" text-anchor="middle" fill="#c00">ELECTRICAL</text><rect x="0" y="270" width="400" height="30" fill="rgba(0,0,0,.6)"/><text x="200" y="290" font-family="Arial" font-size="13" text-anchor="middle" fill="#fff">EXAMPLE PHOTO · RISER DOOR</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s);
+}
+function exLight(kind){
+  let s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#e9e8e3"/>`;
+  for(let x=0;x<=400;x+=100) s+=`<line x1="${x}" y1="0" x2="${x}" y2="300" stroke="#b9b8b2" stroke-width="3"/>`;
+  for(let y=0;y<=300;y+=100) s+=`<line x1="0" y1="${y}" x2="400" y2="${y}" stroke="#b9b8b2" stroke-width="3"/>`;
+  s+= kind==="down" ? `<circle cx="200" cy="140" r="34" fill="#fff" stroke="#999" stroke-width="4"/><circle cx="200" cy="140" r="24" fill="#fffbe6"/>` : `<rect x="100" y="100" width="200" height="100" fill="#fffef2" stroke="#999" stroke-width="3"/>`;
+  s+=`<rect x="${kind==="down"?236:304}" y="${kind==="down"?150:160}" width="34" height="24" rx="2" fill="#f1b81f"/><text x="${kind==="down"?253:321}" y="${kind==="down"?167:177}" font-family="Courier" font-weight="bold" font-size="10" text-anchor="middle" fill="#111">TAG</text><rect x="0" y="270" width="400" height="30" fill="rgba(0,0,0,.6)"/><text x="200" y="290" font-family="Arial" font-size="13" text-anchor="middle" fill="#fff">EXAMPLE PHOTO · LIGHT WITH TAG</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s);
+}
+
+/* ---------- storage: IndexedDB on this phone only ---------- */
+let DB=null;
+function idb(){ return new Promise((res,rej)=>{ try{ const r=indexedDB.open("light-tracer-v2",1); r.onupgradeneeded=()=>r.result.createObjectStore("kv"); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);}catch(e){rej(e)} }); }
+async function loadData(){ try{ const db=await idb(); return await new Promise(res=>{ const q=db.transaction("kv").objectStore("kv").get("data"); q.onsuccess=()=>res(q.result||null); q.onerror=()=>res(null); }); }catch{ return null; } }
+async function save(){
+  try{ const db=await idb(); db.transaction("kv","readwrite").objectStore("kv").put(DB,"data"); }catch{}
+  $("#count").textContent=`${DB.tags.length} tagged · ${DB.boards.length} boards`;
+}
+function seed(){
+  return { example:true, lastPrinted:1028,
+    boards:[
+      {id:"bA",name:"DB-L3-A",location:"Level 3, east riser cupboard (key 92)",fedFrom:"MSB Ground, CB 12",notes:"Lighting chassis on the left. Door sticks, lift and pull.",photos:[exRiser(),exBoard("DB-L3-A",0)]},
+      {id:"bB",name:"DB-L3-B",location:"Level 3, west riser beside fire stairs",fedFrom:"MSB Ground, CB 13",notes:"",photos:[exBoard("DB-L3-B",0)]}
+    ],
+    tags:[
+      {code:"1001",board:"bA",cb:"14",phase:"L1",location:"L3 corridor outside lift lobby",fitting:"600x600 LED panel",notes:"",cbPhotos:[exBoard("DB-L3-A",14)],lightPhotos:[exLight("panel")],history:[{d:"2026-10-28",t:"Replaced driver."}]},
+      {code:"1002",board:"bA",cb:"14",phase:"L1",location:"L3 corridor near kitchenette",fitting:"600x600 LED panel",notes:"Same circuit as 1001.",cbPhotos:[exBoard("DB-L3-A",14)],lightPhotos:[exLight("panel")],history:[{d:"2026-11-02",t:"Tagged, no fault."}]},
+      {code:"1003",board:"bB",cb:"7",phase:"L3",location:"Meeting room 3.12, downlight by window",fitting:"90mm LED downlight",notes:"On motion sensor in ceiling.",cbPhotos:[exBoard("DB-L3-B",7)],lightPhotos:[exLight("down")],history:[{d:"2026-11-04",t:"Downlight swapped."}]}
+    ]};
+}
+const board = id => DB.boards.find(b=>b.id===id);
+const tag = c => DB.tags.find(t=>t.code===c);
+
+/* ---------- helpers ---------- */
+let toastT;
+function toast(m){ const t=$("#toast"); t.textContent=m; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>t.hidden=true,2800); }
+const normalise = raw => { const d=String(raw||"").replace(/\D/g,""); return d||null; };
+function open(code){
+  if(!code) return toast("Type the number printed on the tag.");
+  if(tag(code)) return go("tag",code);
+  go("setup",code);
+}
+function resizeImage(file,max=1200){
+  return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>{ const img=new Image(); img.onload=()=>{ const k=Math.min(1,max/Math.max(img.width,img.height)); const c=document.createElement("canvas"); c.width=Math.round(img.width*k); c.height=Math.round(img.height*k); c.getContext("2d").drawImage(img,0,0,c.width,c.height); res(c.toDataURL("image/jpeg",.72)); }; img.onerror=rej; img.src=r.result; }; r.onerror=rej; r.readAsDataURL(file); });
+}
+function photos(list,key,{edit=false,one=false}={}){
+  if(!list.length) return `<div class="empty">No photo yet.</div>`;
+  return `<div class="photos${one&&list.length===1?" one":""}">${list.map((p,i)=>`<div class="ph"><img src="${p}" data-view alt="Photo ${i+1}">${edit?`<button type="button" data-del="${key}:${i}" aria-label="Remove photo">✕</button>`:""}</div>`).join("")}</div>`;
+}
+const addPhoto = (key,label) => `<label class="btn">${label}<input type="file" data-add="${key}" accept="image/*" multiple hidden></label>`;
+
+/* ---------- views ---------- */
+let view={name:"home"}, draft=null;
+function go(name,arg){ view={name,arg}; render(); window.scrollTo(0,0); }
+const back = (to="home",arg) => `<button class="back" data-go="${to}"${arg?` data-arg="${esc(arg)}"`:""}>← Back</button>`;
+function tagItem(t){ const b=board(t.board); return `<button class="item" data-open="${t.code}"><span class="code">${t.code}</span><span class="t"><b>${esc(t.location)}</b><span>${esc(b?.name||"?")} · CB ${esc(t.cb)}</span></span><span class="cb">${t.history.at(-1)?fmtDate(t.history.at(-1).d):""}</span></button>`; }
+
+const V={
+home(){
+  const recent=[...DB.tags].sort((a,b)=>(b.history.at(-1)?.d||"").localeCompare(a.history.at(-1)?.d||"")).slice(0,6);
+  return `
+  <section class="panel">
+    <h1>Which breaker feeds this light?</h1>
+    <p class="muted">Type a tag number or photograph the QR code. You can also search by place, board or breaker, like "kitchen", "DB-L3-A" or "CB 14".</p>
+    <form class="lookup" id="lookup-form"><input id="lookup" type="search" autocomplete="off" placeholder="1001 or search" aria-label="Tag number or search"><button class="primary">Find</button></form>
+    <div class="list" id="results" hidden></div>
+    <button id="scan">Scan QR from photo</button>
+  </section>
+  ${DB.example?`<section class="panel"><p class="note">This is the mock-up with example data. Try <b>1001</b> to see a tagged light, or <b>1004</b> to set up a fresh tag. Clear the examples when you start for real.</p><button class="danger" id="clear-ex">Clear example data</button></section>`:""}
+  <section class="panel"><h3>Recently worked on</h3>
+    <div class="list">${recent.map(tagItem).join("")||`<div class="empty">No tags set up yet. Stick a tag on a light, then type its number above.</div>`}</div>
+  </section>
+  <section class="panel"><h3>Boards</h3>
+    <div class="list">${DB.boards.map(b=>`<button class="item" data-board="${b.id}"><span class="t"><b>${esc(b.name)}</b><span>${esc(b.location)}</span></span><span class="cb">${DB.tags.filter(t=>t.board===b.id).length} tags</span></button>`).join("")||`<div class="empty">Boards get added when you set up your first tag.</div>`}</div>
+  </section>
+  <section class="panel"><div class="row"><button data-go="make">Make QR tags</button><button data-go="data">Backup &amp; restore</button></div></section>`;
+},
+tag(code){
+  const t=tag(code), b=board(t.board)||{};
+  return `${back()}
+  <div class="row"><button data-go="setup" data-arg="${t.code}">Edit</button><button data-go="qr" data-arg="${t.code}">Show QR</button><button class="danger" id="del">Delete</button></div>
+  <section class="panel">
+    <div class="row" style="align-items:center"><span class="code lg" style="flex:0 0 auto">${t.code}</span><span class="muted" style="flex:1 1 auto">${esc(t.fitting)}</span></div>
+    <h1>${esc(t.location)}</h1>
+    <div class="supply">
+      <div><div class="k">Board</div><div class="v">${esc(b.name||"Unknown")}</div></div>
+      <div><div class="k">Circuit breaker</div><div class="v">CB ${esc(t.cb||"?")}${t.phase?` <span class="cb">${esc(t.phase)}</span>`:""}</div></div>
+      <div class="wide"><div class="k">Board is at</div><div class="v small">${esc(b.location||"")}</div></div>
+      ${b.notes?`<div class="wide"><div class="k">Access notes</div><div class="v small">${esc(b.notes)}</div></div>`:""}
+    </div>
+  </section>
+  <section class="panel"><h3>Breaker</h3>${photos(t.cbPhotos,"",{one:true})}</section>
+  <section class="panel"><h3>Board ${esc(b.name||"")}</h3>${photos(b.photos||[],"")}${b.id?`<button data-board="${b.id}">Everything on this board →</button>`:""}</section>
+  <section class="panel"><h3>The light</h3>${photos(t.lightPhotos,"",{one:true})}${t.notes?`<p>${esc(t.notes)}</p>`:""}</section>
+  <section class="panel"><h3>Job history</h3>
+    <div class="hist">${t.history.slice().reverse().map(h=>`<div><time>${fmtDate(h.d)}</time><span>${esc(h.t)}</span></div>`).join("")||`<p class="muted">Nothing logged yet.</p>`}</div>
+    <form class="lookup" id="log-form"><input id="log-text" style="font:400 16px var(--body);letter-spacing:0" placeholder="e.g. Replaced lamp" aria-label="Log a job"><button>Log</button></form>
+  </section>
+`;
+},
+setup(code){
+  const ex=tag(code);
+  const t=ex||{code,board:DB.boards[0]?.id||"new",cb:"",phase:"",location:"",fitting:"",notes:"",cbPhotos:[],lightPhotos:[],history:[]};
+  draft={...t,cbPhotos:[...t.cbPhotos],lightPhotos:[...t.lightPhotos],boardPhotos:[]};
+  const newB=t.board==="new";
+  return `${back(ex?"tag":"home",ex?code:undefined)}
+  ${ex?"":`<div class="newtag"><b>${esc(code)}</b><span>New tag. Fill this in and it's linked for good.</span></div>`}
+  <form id="tag-form" class="wrap" style="width:100%">
+    <section class="panel">
+      <div class="step"><i>1</i><h2>The light</h2></div>
+      <label class="f">Where is it?<input id="f-loc" value="${esc(t.location)}" placeholder="e.g. L4 toilets, 2nd downlight from door" required></label>
+      <label class="f">Fitting type<input id="f-fit" value="${esc(t.fitting)}" placeholder="e.g. 1200mm LED batten"></label>
+      <div id="ph-lightPhotos">${photos(draft.lightPhotos,"lightPhotos",{edit:true})}</div>
+      ${addPhoto("lightPhotos","+ Photo of the light")}
+    </section>
+    <section class="panel">
+      <div class="step"><i>2</i><h2>The board</h2></div>
+      <label class="f">Supplied from<select id="f-board">${DB.boards.map(b=>`<option value="${b.id}" ${b.id===t.board?"selected":""}>${esc(b.name)}, ${esc(b.location)}</option>`).join("")}<option value="new" ${newB?"selected":""}>+ A board not on the list yet</option></select></label>
+      <div class="sub" id="newboard" ${newB?"":"hidden"}>
+        <label class="f">Board name, as labelled<input id="b-name" placeholder="e.g. DB-L4-A"></label>
+        <label class="f">Where is it?<input id="b-loc" placeholder="e.g. Level 4, east riser cupboard"></label>
+        <label class="f">Fed from<input id="b-fed" placeholder="e.g. MSB Ground, CB 14"></label>
+        <label class="f">Access notes<input id="b-notes" placeholder="Keys, codes, door quirks"></label>
+        <div id="ph-boardPhotos">${photos(draft.boardPhotos,"boardPhotos",{edit:true})}</div>
+        ${addPhoto("boardPhotos","+ Photos of the board")}
+      </div>
+    </section>
+    <section class="panel">
+      <div class="step"><i>3</i><h2>The breaker</h2></div>
+      <div class="row"><label class="f">CB number<input id="f-cb" inputmode="numeric" value="${esc(t.cb)}" placeholder="14" required></label>
+        <label class="f">Phase<select id="f-phase">${["","L1","L2","L3"].map(p=>`<option ${p===t.phase?"selected":""}>${p}</option>`).join("")}</select></label></div>
+      <div id="ph-cbPhotos">${photos(draft.cbPhotos,"cbPhotos",{edit:true})}</div>
+      ${addPhoto("cbPhotos","+ Photo of the breaker with its tag")}
+    </section>
+    <section class="panel">
+      <label class="f">Notes<textarea id="f-notes" placeholder="Anything the next person should know">${esc(t.notes)}</textarea></label>
+      ${ex?"":`<label class="f">What did you do today?<input id="f-job" placeholder="e.g. Replaced driver"></label>`}
+      <button class="primary">${ex?"Save changes":"Save tag "+esc(code)}</button>
+      ${ex?`<button type="button" class="danger" id="del">Delete this tag</button>`:""}
+    </section>
+  </form>`;
+},
+board(id){
+  const b=board(id); const ts=DB.tags.filter(t=>t.board===id).sort((x,y)=>(parseFloat(x.cb)||0)-(parseFloat(y.cb)||0));
+  draft={...b,photos:[...b.photos]};
+  return `${back()}
+  <div class="row"><button data-go="editBoard" data-arg="${b.id}">Edit board</button><button class="danger" id="del-board">Delete board</button></div>
+  <section class="panel">
+    <h1>${esc(b.name)}</h1>
+    <div class="supply">
+      <div class="wide"><div class="k">Location</div><div class="v small">${esc(b.location)}</div></div>
+      <div class="wide"><div class="k">Fed from</div><div class="v small">${esc(b.fedFrom||"Not recorded")}</div></div>
+      ${b.notes?`<div class="wide"><div class="k">Access notes</div><div class="v small">${esc(b.notes)}</div></div>`:""}
+    </div>
+  </section>
+  <section class="panel"><h3>Photos</h3><div id="ph-photos">${photos(draft.photos,"photos",{edit:true})}</div>${addPhoto("photos","+ Add photos")}</section>
+  <section class="panel"><h3>Tagged lights, by breaker</h3><div class="list">${ts.map(tagItem).join("")||`<div class="empty">Nothing tagged on this board yet.</div>`}</div></section>`;
+},
+make(){
+  const start=nextNumber();
+  return `${back()}
+  <section class="panel">
+    <h2>Make QR tags</h2>
+    <p class="muted">Each number comes as a pair: one tag for the light, one for beside the breaker. Works with no internet.</p>
+    <div class="row">
+      <label class="f">First number<input id="m-start" inputmode="numeric" value="${start}"></label>
+      <label class="f">How many numbers<select id="m-count">${[7,14,28,56].map(n=>`<option ${n===14?"selected":""}>${n}</option>`).join("")}</select></label>
+    </div>
+    <p class="note" id="m-warn"></p>
+    ${printButtons()}
+  </section>
+  <section class="panel" id="print-area"></section>`;
+},
+qr(code){
+  return `${back("tag",code)}
+  <section class="panel">
+    <h2>Replacement tags for ${esc(code)}</h2>
+    <p class="muted">Use these if a tag has gone missing or got painted over.</p>
+    ${printButtons()}
+  </section>
+  <section class="panel big" id="print-area">${sheetHTML(+code,1)}</section>`;
+},
+editBoard(id){
+  const b=board(id);
+  return `${back("board",id)}
+  <form class="panel" id="board-form">
+    <h2>Edit board</h2>
+    <label class="f">Board name, as labelled<input id="b-name" value="${esc(b.name)}" required></label>
+    <label class="f">Where is it?<input id="b-loc" value="${esc(b.location)}" required></label>
+    <label class="f">Fed from<input id="b-fed" value="${esc(b.fedFrom)}"></label>
+    <label class="f">Access notes<textarea id="b-notes">${esc(b.notes)}</textarea></label>
+    <p class="note">Change photos on the board's page.</p>
+    <button class="primary">Save board</button>
+  </form>`;
+},
+data(){
+  const n=DB.tags.reduce((a,t)=>a+t.cbPhotos.length+t.lightPhotos.length,0)+DB.boards.reduce((a,b)=>a+b.photos.length,0);
+  return `${back()}
+  <section class="panel"><h2>Backup &amp; restore</h2>
+  <p class="muted">Everything is stored on this phone only. Save a backup now and then, and use it to move the records to another phone.</p>
+  <button class="primary" id="export">Save backup file</button>
+  <label class="btn">Restore from backup file<input type="file" id="import" accept=".json,application/json" hidden></label>
+  <p class="note">${DB.tags.length} tags, ${DB.boards.length} boards, ${n} photos stored.</p></section>`;
+}
+};
+function render(){ $("#app").innerHTML=V[view.name](view.arg); if(view.name==="make") updateSheet(); }
+
+/* ---------- QR tag sheets ---------- */
+const FRAMED=(()=>{ try{ return window.self!==window.top; }catch{ return true; } })();
+const qrText = n => "LIGHT TRACER "+n;
+function nextNumber(){ return Math.max(1000, DB.lastPrinted||0, ...DB.tags.map(t=>+t.code||0)) + 1; }
+function sheetHTML(start,count){
+  let h=`<div class="sheet">`;
+  for(let n=start;n<start+count;n++) for(const k of ["LIGHT","CB / BOARD"]) h+=`<div class="tagl">${QR.svg(qrText(n))}<span class="n">${n}</span><span class="k">${k}</span></div>`;
+  return h+`</div>`;
+}
+const CAN_SHARE=(()=>{ try{ return !FRAMED && !!navigator.canShare && navigator.canShare({files:[new File(["x"],"t.pdf",{type:"application/pdf"})]}); }catch{ return false; } })();
+function printButtons(){
+  return `<div class="row"><button class="primary" id="dl-pdf">Download PDF</button>${CAN_SHARE?`<button id="share-pdf">Email or share</button>`:""}${FRAMED?"":`<button id="print">Print</button>`}</div>
+  <p class="note">The PDF is A4, ready to print. ${CAN_SHARE?"Email or share opens your phone's share sheet: Mail, AirDrop, Print or Files.":FRAMED?"On iPhone the download opens the share sheet, where you can pick Mail.":"Email the downloaded PDF from your Files app."}</p>`;
+}
+function sheetRange(){
+  if(view.name==="qr") return [+view.arg,1];
+  return [parseInt($("#m-start").value,10)||nextNumber(), +$("#m-count").value];
+}
+function updateSheet(){
+  const [s,c]=sheetRange(), used=DB.tags.filter(t=>+t.code>=s&&+t.code<s+c).map(t=>t.code);
+  $("#print-area").innerHTML=sheetHTML(s,c);
+  $("#m-warn").textContent = used.length ? `Already in use: ${used.join(", ")}. Pick a different first number unless you're replacing those tags.` : `Numbers ${s} to ${s+c-1}.`;
+}
+function markPrinted(){ const [s,c]=sheetRange(); if(view.name==="make"){ DB.lastPrinted=Math.max(DB.lastPrinted||0,s+c-1); save(); } }
+function drawPage(start,count){
+  const W=1240,H=1754,cols=4,rows=7,mx=60,my=100,cw=(W-2*mx)/cols,ch=(H-my-60)/rows;
+  const c=document.createElement("canvas"); c.width=W; c.height=H; const g=c.getContext("2d");
+  g.fillStyle="#fff"; g.fillRect(0,0,W,H); g.fillStyle="#111"; g.font="bold 28px Arial"; g.fillText("LIGHT TRACER - QR tag pairs",mx,60);
+  g.font="16px Arial"; g.textAlign="right"; g.fillText("LIGHT tag on the fitting, CB tag beside the breaker. Same number = same circuit.",W-mx,60); g.textAlign="left";
+  for(let i=0;i<count;i++){
+    const n=start+i, r=Math.floor(i/2), pc=i%2;
+    ["LIGHT","CB / BOARD"].forEach((k,j)=>{
+      const x=mx+(pc*2+j)*cw, y=my+r*ch;
+      g.setLineDash([8,6]); g.strokeStyle="#999"; g.lineWidth=2; g.strokeRect(x+8,y+8,cw-16,ch-16); g.setLineDash([]);
+      const q=QR.encode(qrText(n)), m=Math.floor(150/(q.size+8)), qs=m*(q.size+8), qx=Math.round(x+(cw-qs)/2), qy=Math.round(y+20);
+      g.fillStyle="#000"; for(let yy=0;yy<q.size;yy++) for(let xx=0;xx<q.size;xx++) if(q.dark(xx,yy)) g.fillRect(qx+(xx+4)*m,qy+(yy+4)*m,m,m);
+      g.textAlign="center"; g.font="bold 34px 'Courier New', monospace"; g.fillText(String(n),x+cw/2,qy+qs+30);
+      g.fillStyle="#f1b81f"; g.fillRect(x+cw/2-70,qy+qs+42,140,24); g.fillStyle="#111"; g.font="bold 16px Arial"; g.fillText(k,x+cw/2,qy+qs+60); g.textAlign="left";
+    });
+  }
+  return c;
+}
+async function makePDF(){
+  const [start,count]=sheetRange(), per=14, pages=[];
+  for(let p=0;p*per<count;p++){
+    const c=drawPage(start+p*per,Math.min(per,count-p*per));
+    const b=await new Promise(r=>c.toBlob(r,"image/jpeg",.95));
+    pages.push({bytes:new Uint8Array(await b.arrayBuffer()),w:c.width,h:c.height});
+  }
+  // hand-written PDF: one A4 page per JPEG
+  const enc=new TextEncoder(), parts=[], offs=[]; let len=0;
+  const add=x=>{ const u=typeof x==="string"?enc.encode(x):x; parts.push(u); len+=u.length; };
+  const obj=(id,body)=>{ offs[id]=len; add(`${id} 0 obj\n`); body(); add(`\nendobj\n`); };
+  add("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+  const n=pages.length, kids=pages.map((_,i)=>`${3+i*3} 0 R`).join(" ");
+  obj(1,()=>add("<< /Type /Catalog /Pages 2 0 R >>"));
+  obj(2,()=>add(`<< /Type /Pages /Kids [${kids}] /Count ${n} >>`));
+  pages.forEach((pg,i)=>{
+    const pid=3+i*3, cid=pid+1, iid=pid+2, cs=`q 595.28 0 0 841.89 0 0 cm /Im0 Do Q`;
+    obj(pid,()=>add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im0 ${iid} 0 R >> >> /Contents ${cid} 0 R >>`));
+    obj(cid,()=>add(`<< /Length ${cs.length} >>\nstream\n${cs}\nendstream`));
+    obj(iid,()=>{ add(`<< /Type /XObject /Subtype /Image /Width ${pg.w} /Height ${pg.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${pg.bytes.length} >>\nstream\n`); add(pg.bytes); add("\nendstream"); });
+  });
+  const total=3+n*3, xref=len;
+  add(`xref\n0 ${total}\n0000000000 65535 f \n`+offs.slice(1).map(o=>String(o).padStart(10,"0")+" 00000 n \n").join(""));
+  add(`trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  return new Blob(parts,{type:"application/pdf"});
+}
+function search(q){
+  q=q.trim().toLowerCase(); if(!q) return [];
+  const cbm=q.match(/^cb\s*(\d+)$/), words=q.split(/\s+/);
+  return DB.tags.filter(t=>{
+    const b=board(t.board)||{};
+    if(cbm) return t.cb===cbm[1];
+    if(/^\d+$/.test(q)) return t.code.startsWith(q);
+    const hay=[t.code,t.location,t.fitting,t.notes,b.name,b.location,"cb "+t.cb,"cb"+t.cb].join(" ").toLowerCase();
+    return words.every(w=>hay.includes(w));
+  }).slice(0,20);
+}
+function showResults(){
+  const q=$("#lookup").value, el=$("#results"), r=search(q);
+  if(!q.trim()){ el.hidden=true; return; }
+  el.hidden=false;
+  const d=normalise(q), isNum=/^\s*\d+\s*$/.test(q);
+  el.innerHTML = r.map(tagItem).join("") + (isNum && !tag(d) ? `<button class="item" data-open="${d}"><span class="code">${d}</span><span class="t"><b>Set up tag ${d}</b><span>Not used yet</span></span></button>` : "") || `<div class="empty">Nothing matches "${esc(q)}".</div>`;
+}
+const pdfName=()=>{ const [s,c]=sheetRange(); return c===1?`light-tracer-tag-${s}.pdf`:`light-tracer-tags-${s}-${s+c-1}.pdf`; };
+async function downloadPDF(){
+  const blob=await makePDF(), name=pdfName();
+  if(FRAMED){
+    const d=await window.claude?.use?.("downloads");
+    if(!d){ toast("Downloads aren't available here. Use the installed app."); return; }
+    try{ await d.save({filename:name,data:blob}); markPrinted(); toast("PDF saved"); }
+    catch(e){ if(e?.code!=="declined") toast("Couldn't save the PDF here. Try the installed app."); }
+    return;
+  }
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; a.click(); markPrinted(); toast("PDF saved");
+}
+async function sharePDF(){
+  const blob=await makePDF(), file=new File([blob],pdfName(),{type:"application/pdf"});
+  try{ await navigator.share({files:[file],title:"Light Tracer QR tags"}); markPrinted(); }
+  catch(e){ if(e?.name!=="AbortError") toast("Couldn't open sharing. Use Download PDF instead."); }
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click",async e=>{
+  const t=e.target.closest("[data-go],[data-open],[data-board],[data-view],[data-del],#scan,#clear-ex,#del,#del-board,#export,#home-btn,#print,#dl-pdf,#share-pdf");
+  if(!t) return;
+  if(t.id==="print"){ markPrinted(); window.print(); return; }
+  if(t.id==="dl-pdf") return downloadPDF();
+  if(t.id==="share-pdf") return sharePDF();
+  if(t.id==="home-btn") return go("home");
+  if(t.dataset.go) return go(t.dataset.go,t.dataset.arg);
+  if(t.dataset.open) return open(t.dataset.open);
+  if(t.dataset.board) return go("board",t.dataset.board);
+  if(t.dataset.view!==undefined){ $("#viewer-img").src=t.src; $("#viewer").hidden=false; return; }
+  if(t.dataset.del){ const [k,i]=t.dataset.del.split(":"); draft[k].splice(+i,1); refreshPhotos(k); if(view.name==="board"){ board(view.arg).photos=draft.photos; await save(); } return; }
+  if(t.id==="scan") return $("#scan-input").click();
+  if(t.id==="clear-ex"){ if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Tap again to clear"; return; } DB={boards:[],tags:[],lastPrinted:DB.lastPrinted}; await save(); toast("Example data cleared"); return go("home"); }
+  if(t.id==="del-board"){
+    const n=DB.tags.filter(x=>x.board===view.arg).length;
+    if(n){ toast(`${n} tag${n>1?"s are":" is"} still on this board. Move or delete ${n>1?"them":"it"} first.`); return; }
+    if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Tap again to delete"; return; }
+    DB.boards=DB.boards.filter(b=>b.id!==view.arg); await save(); toast("Board deleted"); return go("home");
+  }
+  if(t.id==="del"){ if(!t.dataset.sure){ t.dataset.sure=1; t.textContent="Tap again to delete"; return; } DB.tags=DB.tags.filter(x=>x.code!==view.arg); await save(); toast(`Tag ${view.arg} deleted`); return go("home"); }
+  if(t.id==="export"){
+    try{ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([JSON.stringify(DB)],{type:"application/json"})); a.download=`light-tracer-backup-${today()}.json`; a.click(); toast("Backup saved to your Files"); }
+    catch{ toast("Couldn't save a backup here. Use the installed app."); }
+  }
+});
+$("#viewer").addEventListener("click",()=>$("#viewer").hidden=true);
+document.addEventListener("input",e=>{ if(e.target.id==="lookup") showResults(); if(e.target.id==="m-start") updateSheet(); });
+
+document.addEventListener("submit",async e=>{
+  e.preventDefault(); const f=e.target;
+  if(f.id==="lookup-form"){
+    const q=$("#lookup").value;
+    if(/^\s*\d+\s*$/.test(q)) return open(normalise(q));
+    const r=search(q); if(r.length===1) return go("tag",r[0].code);
+    return showResults();
+  }
+  if(f.id==="board-form"){
+    const b=board(view.arg); Object.assign(b,{name:$("#b-name").value.trim(),location:$("#b-loc").value.trim(),fedFrom:$("#b-fed").value.trim(),notes:$("#b-notes").value.trim()});
+    await save(); toast("Board saved"); return go("board",b.id);
+  }
+  if(f.id==="log-form"){ const v=$("#log-text").value.trim(); if(!v) return; tag(view.arg).history.push({d:today(),t:v}); await save(); toast("Logged"); return render(); }
+  if(f.id==="tag-form"){
+    let bid=$("#f-board").value;
+    if(bid==="new"){
+      const name=$("#b-name").value.trim(), loc=$("#b-loc").value.trim();
+      if(!name||!loc){ toast("Give the new board a name and location."); return; }
+      bid=uid(); DB.boards.push({id:bid,name,location:loc,fedFrom:$("#b-fed").value.trim(),notes:$("#b-notes").value.trim(),photos:draft.boardPhotos});
+    }
+    const {boardPhotos,...rest}=draft;
+    const rec={...rest,board:bid,cb:$("#f-cb").value.trim(),phase:$("#f-phase").value,location:$("#f-loc").value.trim(),fitting:$("#f-fit").value.trim(),notes:$("#f-notes").value.trim()};
+    const isNew=!tag(rec.code);
+    if(isNew){ rec.history=[{d:today(),t:$("#f-job").value.trim()||"Tagged."}]; DB.tags.push(rec); }
+    else DB.tags[DB.tags.findIndex(x=>x.code===rec.code)]=rec;
+    await save(); toast(isNew?`Tag ${rec.code} saved`:"Saved"); return go("tag",rec.code);
+  }
+});
+
+document.addEventListener("change",async e=>{
+  const t=e.target;
+  if(t.id==="m-count"){ updateSheet(); return; }
+  if(t.id==="f-board"){ $("#newboard").hidden=t.value!=="new"; return; }
+  if(t.dataset.add){
+    const k=t.dataset.add;
+    for(const file of t.files){ try{ draft[k].push(await resizeImage(file)); }catch{ toast("Couldn't read that photo."); } }
+    refreshPhotos(k); t.value="";
+    if(view.name==="board"){ board(view.arg).photos=draft.photos; await save(); }
+  }
+  if(t.id==="scan-input" && t.files[0]){
+    try{
+      const img=new Image(); img.src=await resizeImage(t.files[0],1600); await img.decode();
+      const c=document.createElement("canvas"); c.width=img.width; c.height=img.height; const ctx=c.getContext("2d"); ctx.drawImage(img,0,0);
+      let text=null;
+      if("BarcodeDetector" in window){ try{ const r=await new BarcodeDetector({formats:["qr_code"]}).detect(c); text=r[0]?.rawValue; }catch{} }
+      if(!text && window.jsQR){ const d=ctx.getImageData(0,0,c.width,c.height); text=jsQR(d.data,c.width,c.height)?.data; }
+      if(text) open(normalise(text)); else toast("No QR code found. Get closer, or type the number.");
+    }catch{ toast("Couldn't read that photo."); }
+    t.value="";
+  }
+  if(t.id==="import" && t.files[0]){
+    try{ const j=JSON.parse(await t.files[0].text()); if(!Array.isArray(j.tags)||!Array.isArray(j.boards)) throw 0; DB=j; await save(); toast("Backup restored"); go("home"); }
+    catch{ toast("That file isn't a Light Tracer backup."); }
+  }
+});
+
+(async()=>{
+  DB=(await loadData())||seed(); await save(); render();
+  try{ navigator.storage?.persist?.(); }catch{}
+  try{ if("serviceWorker" in navigator && location.protocol==="https:" && !/claude/.test(location.hostname)) navigator.serviceWorker.register("sw.js"); }catch{}
+})();
+</script>
